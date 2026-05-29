@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Photo Printer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel" aria-labelledby="title">
+        <div>
+          <p class="eyebrow">Local photo printer</p>
+          <h1 id="title">Print a photo</h1>
+        </div>
+
+        <form id="print-form">
+          <label class="drop-zone" for="photo">
+            <input id="photo" name="photo" type="file" accept="image/*" required />
+            <span class="drop-title">Choose photo</span>
+            <span id="file-name" class="drop-meta">JPG, PNG, HEIC, or WebP</span>
+          </label>
+
+          <label class="field" for="size">
+            <span>Size</span>
+            <select id="size" name="size" required>
+              <option value="4x6">4 x 6</option>
+              <option value="5x7">5 x 7</option>
+              <option value="8x10">8 x 10</option>
+            </select>
+          </label>
+
+          <button type="submit">Print photo</button>
+        </form>
+
+        <div class="google-row">
+          <button id="google-button" class="secondary" type="button" disabled>
+            Google Photos
+          </button>
+          <span id="google-status">OAuth setup required</span>
+        </div>
+
+        <p id="status" class="status" role="status"></p>
+      </section>
+
+      <section class="preview" aria-label="Print preview">
+        <img id="preview-image" alt="" />
+        <p id="preview-empty">Your prepared print preview appears here.</p>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
