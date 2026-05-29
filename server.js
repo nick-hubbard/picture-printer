@@ -107,6 +107,13 @@ async function handlePrintRequest(req, res, { print }) {
       pages: pages.map((page) => ({
         previewUrl: `/prints/${path.basename(page.outputPath)}`,
         imageCount: page.items.length,
+        items: page.items.map((placement) => ({
+          index: placement.item.index,
+          left: placement.left,
+          top: placement.top,
+          width: placement.width,
+          height: placement.height,
+        })),
       })),
       message: !print
         ? `Previewing ${jobs.length} photo${jobs.length === 1 ? '' : 's'} on ${pages.length} page${pages.length === 1 ? '' : 's'}.`
@@ -161,7 +168,13 @@ async function composePages(jobs) {
 
   const outputPages = [];
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
-    const pageItems = placements.filter((placement) => placement.pageIndex === pageIndex);
+    const pageItems = placements
+      .filter((placement) => placement.pageIndex === pageIndex)
+      .map((placement) => ({
+        ...placement,
+        left: margin + placement.x,
+        top: margin + placement.y,
+      }));
     const outputPath = path.join(PRINT_DIR, `${crypto.randomUUID()}-page-${pageIndex + 1}.jpg`);
     const composites = await Promise.all(
       pageItems.map(async (placement) => {
@@ -173,8 +186,8 @@ async function composePages(jobs) {
 
         return {
           input: image,
-          left: margin + placement.x,
-          top: margin + placement.y,
+          left: placement.left,
+          top: placement.top,
         };
       }),
     );
