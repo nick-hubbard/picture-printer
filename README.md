@@ -14,6 +14,37 @@ Open `http://localhost:3000`.
 
 To open the app from another device on the same network, keep `HOST=0.0.0.0` in `.env`, restart the app, and use one of the `LAN access` URLs printed in the terminal.
 
+## Run With Docker And HTTPS
+
+Docker runs the Node app behind an nginx HTTPS reverse proxy. This lets another computer on the same network open the app at `https://HOST_OR_IP`.
+
+1. Copy the environment file if needed:
+
+```sh
+cp .env.example .env
+```
+
+2. Create a local TLS certificate. Replace `192.168.1.25` with the Docker host computer's LAN IP or DNS name:
+
+```sh
+mkdir -p certs
+openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
+  -keyout certs/server.key \
+  -out certs/server.crt \
+  -subj "/CN=192.168.1.25" \
+  -addext "subjectAltName=IP:192.168.1.25,DNS:localhost"
+```
+
+3. Start the containers:
+
+```sh
+docker compose up --build
+```
+
+Open `https://192.168.1.25` from another computer. Because this is a self-signed certificate, browsers will show a trust warning unless you install `certs/server.crt` as a trusted certificate on the client device.
+
+Generated files are stored in Docker volumes named `photo-printing_uploads`, `photo-printing_prints`, and `photo-printing_google-photos`.
+
 By default the app runs in preview mode and does not send printer jobs. To enable printing, edit `.env`:
 
 ```sh
@@ -57,3 +88,9 @@ GOOGLE_REDIRECT_URI=http://localhost:3000/auth/google/callback
 ```
 
 Restart the app after changing `.env`.
+
+When running through Docker HTTPS from another computer, also add the HTTPS callback URL to the Google OAuth client and set it in `.env`:
+
+```sh
+GOOGLE_REDIRECT_URI=https://192.168.1.25/auth/google/callback
+```

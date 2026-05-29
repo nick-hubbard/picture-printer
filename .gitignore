@@ -2,4 +2,6 @@ node_modules/
 .env
 prints/
 google-photos/
+certs/*
+!certs/.gitkeep
 .DS_Store
