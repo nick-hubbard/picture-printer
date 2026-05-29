@@ -11,26 +11,20 @@
       <section class="panel" aria-labelledby="title">
         <div>
           <p class="eyebrow">Local photo printer</p>
-          <h1 id="title">Print a photo</h1>
+          <h1 id="title">Print photos</h1>
         </div>
 
         <form id="print-form">
-          <label class="drop-zone" for="photo">
-            <input id="photo" name="photo" type="file" accept="image/*" required />
-            <span class="drop-title">Choose photo</span>
+          <label class="drop-zone" for="photos">
+            <input id="photos" name="photos" type="file" accept="image/*" multiple required />
+            <span class="drop-title">Choose photos</span>
             <span id="file-name" class="drop-meta">JPG, PNG, HEIC, or WebP</span>
           </label>
 
-          <label class="field" for="size">
-            <span>Size</span>
-            <select id="size" name="size" required>
-              <option value="4x6">4 x 6</option>
-              <option value="5x7">5 x 7</option>
-              <option value="8x10">8 x 10</option>
-            </select>
-          </label>
+          <div id="photo-list" class="photo-list" aria-live="polite"></div>
+          <input id="sizes" name="sizes" type="hidden" value="[]" />
 
-          <button type="submit">Print photo</button>
+          <button type="submit">Print photos</button>
         </form>
 
         <div class="google-row">
@@ -44,8 +38,8 @@
       </section>
 
       <section class="preview" aria-label="Print preview">
-        <img id="preview-image" alt="" />
-        <p id="preview-empty">Your prepared print preview appears here.</p>
+        <div id="preview-pages" class="preview-pages"></div>
+        <p id="preview-empty">Choose photos to preview the print pages.</p>
       </section>
     </main>
 

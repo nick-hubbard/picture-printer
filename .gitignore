@@ -1,0 +1,4 @@
+node_modules/
+.env
+prints/
+.DS_Store

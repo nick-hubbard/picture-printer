@@ -1,6 +1,6 @@
 # Photo Printer
 
-A tiny local web app for uploading a photo, choosing a print size, and sending the prepared image to a printer configured on the Mac.
+A tiny local web app for uploading photos, choosing a print size for each one, and sending prepared pages to a printer configured on the Mac.
 
 ## Run
 
@@ -25,13 +25,19 @@ Leave `PRINTER_NAME` blank to use the system default printer, or set it to a pri
 lpstat -p -d
 ```
 
-## Print Sizes
+## Batch Printing
 
-The app prepares images at 300 DPI with center crop:
+The app prepares a live Letter-size page preview at 300 DPI, center-crops each photo to its selected size, and packs multiple photos onto a page when they fit. Larger photos are placed first to reduce paper waste.
 
+Available photo sizes:
+
+- `2x3`
+- `2x3.5`
+- `3x4`
+- `4x4`
+- `3.5x5`
 - `4x6`
 - `5x7`
-- `8x10`
 
 ## Google Photos
 
