@@ -27,7 +27,7 @@ lpstat -p -d
 
 ## Batch Printing
 
-The app prepares a live Letter-size page preview at 300 DPI, center-crops each photo to its selected size, and packs multiple photos onto a page when they fit. Larger photos are placed first to reduce paper waste.
+The app prepares a live Letter-size page preview at 300 DPI, preserves each photo's orientation, and fits the whole image inside the selected print size with white padding when needed. For example, a landscape photo printed as `4x6` is prepared as `6x4`. Larger photos are placed first to reduce paper waste.
 
 Available photo sizes:
 

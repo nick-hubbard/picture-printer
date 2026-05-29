@@ -143,20 +143,11 @@ async function composePages(jobs) {
   const placements = [];
   const pages = [];
 
-  const items = jobs
-    .map((job, index) => ({
-      ...job,
-      index,
-      width: Math.round(job.size.widthIn * DPI),
-      height: Math.round(job.size.heightIn * DPI),
-    }))
+  const items = (await Promise.all(jobs.map(preparePrintItem)))
     .sort((a, b) => b.width * b.height - a.width * a.height);
 
   for (const item of items) {
-    const candidates = [
-      { ...item, rotated: false },
-      { ...item, width: item.height, height: item.width, rotated: true },
-    ].filter((candidate) => candidate.width <= usableWidth && candidate.height <= usableHeight);
+    const candidates = [item].filter((candidate) => candidate.width <= usableWidth && candidate.height <= usableHeight);
 
     if (!candidates.length) {
       throw new Error(`${item.size.label} is too large for ${PAGE.label} paper.`);
@@ -180,7 +171,7 @@ async function composePages(jobs) {
       pageItems.map(async (placement) => {
         const image = await sharp(placement.item.file.path)
           .rotate()
-          .resize(placement.width, placement.height, { fit: 'cover', position: 'center' })
+          .resize(placement.width, placement.height, { fit: 'contain', background: '#ffffff' })
           .jpeg({ quality: 95 })
           .toBuffer();
 
@@ -209,6 +200,28 @@ async function composePages(jobs) {
   }
 
   return outputPages;
+}
+
+async function preparePrintItem(job, index) {
+  const metadata = await sharp(job.file.path).metadata();
+  const width = metadata.width || 0;
+  const height = metadata.height || 0;
+  const swapsAxes = metadata.orientation >= 5 && metadata.orientation <= 8;
+  const orientedWidth = swapsAxes ? height : width;
+  const orientedHeight = swapsAxes ? width : height;
+  const printWidthIn = Math.max(job.size.widthIn, job.size.heightIn);
+  const printHeightIn = Math.min(job.size.widthIn, job.size.heightIn);
+  const isLandscape = orientedWidth > orientedHeight;
+  const isPortrait = orientedHeight > orientedWidth;
+  const widthIn = isLandscape ? printWidthIn : isPortrait ? printHeightIn : job.size.widthIn;
+  const heightIn = isLandscape ? printHeightIn : isPortrait ? printWidthIn : job.size.heightIn;
+
+  return {
+    ...job,
+    index,
+    width: Math.round(widthIn * DPI),
+    height: Math.round(heightIn * DPI),
+  };
 }
 
 function placeItem(pages, candidates, usableWidth, usableHeight, gap) {
