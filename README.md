@@ -12,6 +12,8 @@ npm start
 
 Open `http://localhost:3000`.
 
+To open the app from another device on the same network, keep `HOST=0.0.0.0` in `.env`, restart the app, and use one of the `LAN access` URLs printed in the terminal.
+
 By default the app runs in preview mode and does not send printer jobs. To enable printing, edit `.env`:
 
 ```sh
@@ -41,4 +43,17 @@ Available photo sizes:
 
 ## Google Photos
 
-The UI includes a disabled Google Photos entry point. To finish that feature, create a Google Cloud OAuth client, request Google Photos Library API access, and add a server route that exchanges the selected media item for a temporary download URL before passing the image through the same print pipeline.
+The Google Photos button uses the Google Photos Picker API, which lets users explicitly choose the photos they want to share with this local app.
+
+1. In Google Cloud, enable the Google Photos Picker API.
+2. Create an OAuth Web application client.
+3. Add `http://localhost:3000/auth/google/callback` as an authorized redirect URI.
+4. Add the credentials to `.env`:
+
+```sh
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:3000/auth/google/callback
+```
+
+Restart the app after changing `.env`.

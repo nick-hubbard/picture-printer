@@ -16,13 +16,14 @@
 
         <form id="print-form">
           <label class="drop-zone" for="photos">
-            <input id="photos" name="photos" type="file" accept="image/*" multiple required />
+            <input id="photos" name="photos" type="file" accept="image/*" multiple />
             <span class="drop-title">Choose photos</span>
             <span id="file-name" class="drop-meta">JPG, PNG, HEIC, or WebP</span>
           </label>
 
           <div id="photo-list" class="photo-list" aria-live="polite"></div>
           <input id="sizes" name="sizes" type="hidden" value="[]" />
+          <input id="google-photo-ids" name="googlePhotoIds" type="hidden" value="[]" />
 
           <button type="submit">Print photos</button>
         </form>
