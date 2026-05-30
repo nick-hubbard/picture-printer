@@ -1,7 +1,6 @@
 const form = document.querySelector('#print-form');
 const photoInput = document.querySelector('#photos');
 const fileName = document.querySelector('#file-name');
-const photoList = document.querySelector('#photo-list');
 const sizesInput = document.querySelector('#sizes');
 const googlePhotoIdsInput = document.querySelector('#google-photo-ids');
 const statusText = document.querySelector('#status');
@@ -72,7 +71,6 @@ photoInput.addEventListener('change', () => {
   photoInput.value = '';
   syncHiddenInputs();
   updateSelectedPhotoCount();
-  renderPhotoList(getSelectedPhotos());
   updatePreview();
 });
 
@@ -168,7 +166,7 @@ browserPrintButton.addEventListener('click', () => {
   }, { once: true });
 });
 
-downloadButton.addEventListener('click', () => {
+downloadButton?.addEventListener('click', () => {
   for (const [index, page] of currentPages.entries()) {
     const link = document.createElement('a');
     link.href = getPageImageUrl(page);
@@ -195,7 +193,14 @@ document.addEventListener('click', (event) => {
   }
 
   const target = event.target;
-  if (target instanceof Node && (previewPicker.contains(target) || target.closest?.('.preview-hotspot'))) {
+  if (target instanceof Node && previewPicker.contains(target)) {
+    return;
+  }
+
+  const selectedHotspot = target instanceof Element
+    ? target.closest('.preview-hotspot.is-selected')
+    : null;
+  if (selectedHotspot) {
     return;
   }
 
@@ -219,38 +224,6 @@ document.addEventListener('keydown', (event) => {
 function hidePreviewPicker() {
   previewPicker.hidden = true;
   previewPicker.replaceChildren();
-}
-
-function renderPhotoList(photos) {
-  photoList.replaceChildren(
-    ...photos.map((photo, index) => {
-      const row = document.createElement('div');
-      row.className = 'photo-row';
-      row.dataset.photoIndex = String(index);
-
-      const name = document.createElement('span');
-      name.className = 'photo-name';
-      name.textContent = photo.name;
-
-      const select = document.createElement('select');
-      select.setAttribute('aria-label', `Print size for ${photo.name}`);
-      for (const size of printSizes) {
-        const option = document.createElement('option');
-        option.value = size.value;
-        option.textContent = size.label;
-        option.selected = size.value === selectedSizes[index];
-        select.append(option);
-      }
-      select.addEventListener('change', () => {
-        selectedSizes[index] = select.value;
-        syncHiddenInputs();
-        updatePreview();
-      });
-
-      row.append(name, select);
-      return row;
-    }),
-  );
 }
 
 async function updatePreview() {
@@ -330,7 +303,9 @@ function getPageImageUrl(page, { cacheBust = false } = {}) {
 function updatePreparedPageActions() {
   const hasPages = currentPages.length > 0;
   browserPrintButton.disabled = !hasPages;
-  downloadButton.disabled = !hasPages;
+  if (downloadButton) {
+    downloadButton.disabled = !hasPages;
+  }
 }
 
 function createPreviewHotspot(item) {
@@ -349,7 +324,6 @@ function createPreviewHotspot(item) {
   button.addEventListener('click', (event) => {
     event.stopPropagation();
     selectedPreviewIndex = item.index;
-    focusPhotoSize(item.index);
     showPreviewPicker(item.index, button);
     updateSelectedPreviewHotspot();
   });
@@ -362,29 +336,23 @@ function updateSelectedPreviewHotspot() {
   }
 }
 
-function focusPhotoSize(index) {
-  const row = photoList.querySelector(`[data-photo-index="${index}"]`);
-  const select = row?.querySelector('select');
-  if (!row || !select) {
-    return;
-  }
-
-  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  select.focus();
-  row.classList.remove('is-highlighted');
-  window.requestAnimationFrame(() => {
-    row.classList.add('is-highlighted');
-    window.setTimeout(() => row.classList.remove('is-highlighted'), 1400);
-  });
-}
-
 function showPreviewPicker(index, anchor) {
   previewPicker.replaceChildren();
 
+  const header = document.createElement('div');
+  const title = document.createElement('span');
+  const closeButton = document.createElement('button');
   const label = document.createElement('label');
   const labelText = document.createElement('span');
   const select = document.createElement('select');
   const removeButton = document.createElement('button');
+  header.className = 'preview-picker-header';
+  title.textContent = 'Photo';
+  closeButton.className = 'preview-picker-close';
+  closeButton.type = 'button';
+  closeButton.textContent = 'x';
+  closeButton.setAttribute('aria-label', 'Close size picker');
+  closeButton.addEventListener('click', hidePreviewPicker);
   labelText.textContent = 'Size';
   select.setAttribute('aria-label', `Preview size for photo ${index + 1}`);
 
@@ -399,14 +367,11 @@ function showPreviewPicker(index, anchor) {
   select.addEventListener('change', () => {
     selectedSizes[index] = select.value;
     syncHiddenInputs();
-    const rowSelect = photoList.querySelector(`[data-photo-index="${index}"] select`);
-    if (rowSelect) {
-      rowSelect.value = select.value;
-    }
     previewPicker.hidden = true;
     updatePreview();
   });
 
+  header.append(title, closeButton);
   label.append(labelText, select);
   removeButton.className = 'preview-remove';
   removeButton.type = 'button';
@@ -415,7 +380,7 @@ function showPreviewPicker(index, anchor) {
     removePhoto(index);
   });
 
-  previewPicker.append(label, removeButton);
+  previewPicker.append(header, label, removeButton);
   previewPicker.hidden = false;
 
   const anchorRect = anchor.getBoundingClientRect();
@@ -446,7 +411,6 @@ function addGooglePhotos(items) {
   syncHiddenInputs();
   updateSelectedPhotoCount();
   googleStatus.textContent = 'Connected';
-  renderPhotoList(getSelectedPhotos());
   updatePreview();
 }
 
@@ -468,7 +432,6 @@ function removePhoto(index) {
   }
   syncHiddenInputs();
   updateSelectedPhotoCount();
-  renderPhotoList(getSelectedPhotos());
   updatePreview();
 }
 

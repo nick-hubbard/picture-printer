@@ -128,38 +128,6 @@ form {
   font-size: 0.93rem;
 }
 
-.photo-list {
-  display: grid;
-  gap: 10px;
-}
-
-.photo-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px;
-  gap: 10px;
-  align-items: center;
-  min-height: 48px;
-  padding: 8px 8px 8px 12px;
-  border: 1px solid #d8d3ca;
-  background: #ffffff;
-  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
-}
-
-.photo-row.is-highlighted {
-  border-color: #2f7d69;
-  background: #f0faf5;
-  box-shadow: 0 0 0 3px rgb(47 125 105 / 18%);
-}
-
-.photo-name {
-  min-width: 0;
-  overflow: hidden;
-  color: #35312b;
-  font-size: 0.94rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 select,
 button {
   width: 100%;
@@ -212,7 +180,7 @@ button:disabled {
 
 .preview-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 180px));
+  grid-template-columns: minmax(0, 180px);
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -283,6 +251,13 @@ button:disabled {
   outline: none;
 }
 
+.preview-picker-header {
+  display: grid;
+  grid-template-columns: 1fr 32px;
+  gap: 8px;
+  align-items: center;
+}
+
 .preview-picker label {
   display: grid;
   gap: 6px;
@@ -293,6 +268,17 @@ button:disabled {
   font-size: 0.78rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.preview-picker-close {
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-color: #b9b0a2;
+  background: #ffffff;
+  color: #202124;
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .preview-picker select {
