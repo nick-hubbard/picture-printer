@@ -14,6 +14,44 @@ body {
   min-height: 100vh;
 }
 
+.legal-links {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  padding: 0 32px 28px;
+}
+
+.legal-links a,
+.back-link {
+  color: #6e695f;
+  font-size: 0.9rem;
+}
+
+.legal-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 56px 24px 72px;
+  line-height: 1.6;
+}
+
+.legal-page h1 {
+  margin-top: 28px;
+  margin-bottom: 8px;
+}
+
+.legal-page h2 {
+  margin: 32px 0 8px;
+}
+
+.legal-page p {
+  color: #6e695f;
+}
+
+.legal-page code {
+  color: #202124;
+  font-size: 0.95em;
+}
+
 button,
 select,
 input {
