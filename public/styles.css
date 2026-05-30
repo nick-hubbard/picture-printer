@@ -275,6 +275,10 @@ button:disabled {
   box-shadow: 0 14px 38px rgb(32 33 36 / 22%);
 }
 
+.preview-picker[hidden] {
+  display: none;
+}
+
 .preview-picker:focus {
   outline: none;
 }
