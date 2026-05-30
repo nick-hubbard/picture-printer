@@ -15,8 +15,13 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.set('trust proxy', true);
+const IS_VERCEL = Boolean(process.env.VERCEL);
+const DATA_DIR = process.env.DATA_DIR || (IS_VERCEL ? path.join(os.tmpdir(), 'photo-printing') : __dirname);
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+const PRINT_DIR = path.join(DATA_DIR, 'prints');
+const GOOGLE_PHOTOS_DIR = path.join(DATA_DIR, 'google-photos');
 const upload = multer({
-  dest: path.join(__dirname, 'uploads'),
+  dest: UPLOAD_DIR,
   limits: { fileSize: 25 * 1024 * 1024, files: 30 },
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
@@ -26,9 +31,8 @@ const upload = multer({
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const PRINT_DRY_RUN = process.env.PRINT_DRY_RUN !== 'false';
+const SERVER_PRINTING_ENABLED = !IS_VERCEL && !PRINT_DRY_RUN;
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
-const PRINT_DIR = path.join(__dirname, 'prints');
-const GOOGLE_PHOTOS_DIR = path.join(__dirname, 'google-photos');
 const GOOGLE_TOKEN_PATH = path.join(GOOGLE_PHOTOS_DIR, '.google-token.json');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
@@ -63,6 +67,8 @@ app.get('/api/options', (_req, res) => {
   res.json({
     sizes: Object.entries(PRINT_SIZES).map(([value, size]) => ({ value, label: size.label })),
     dryRun: PRINT_DRY_RUN,
+    hosted: IS_VERCEL,
+    serverPrintingEnabled: SERVER_PRINTING_ENABLED,
     printerName: PRINTER_NAME || 'System default printer',
     googlePhotosEnabled: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     googlePhotosConnected: hasGoogleToken(),
@@ -192,7 +198,7 @@ async function handlePrintRequest(req, res, { print }) {
     const pages = await composePages(jobs);
     await cleanupUploads(uploadedFiles);
 
-    if (print && !PRINT_DRY_RUN) {
+    if (print && SERVER_PRINTING_ENABLED) {
       for (const page of pages) {
         await sendToPrinter(page.outputPath);
       }
@@ -201,6 +207,8 @@ async function handlePrintRequest(req, res, { print }) {
     return res.json({
       ok: true,
       dryRun: PRINT_DRY_RUN,
+      hosted: IS_VERCEL,
+      serverPrintingEnabled: SERVER_PRINTING_ENABLED,
       pageCount: pages.length,
       imageCount: jobs.length,
       pages: pages.map((page) => ({
@@ -216,8 +224,8 @@ async function handlePrintRequest(req, res, { print }) {
       })),
       message: !print
         ? `Previewing ${jobs.length} photo${jobs.length === 1 ? '' : 's'} on ${pages.length} page${pages.length === 1 ? '' : 's'}.`
-        : PRINT_DRY_RUN
-        ? `Prepared ${jobs.length} photo${jobs.length === 1 ? '' : 's'} on ${pages.length} page${pages.length === 1 ? '' : 's'}. Set PRINT_DRY_RUN=false to print.`
+        : !SERVER_PRINTING_ENABLED
+        ? `Prepared ${jobs.length} photo${jobs.length === 1 ? '' : 's'} on ${pages.length} printable page${pages.length === 1 ? '' : 's'}. Use your browser to print or download.`
         : `Sent ${pages.length} page${pages.length === 1 ? '' : 's'} to ${PRINTER_NAME || 'the default printer'}.`,
     });
   } catch (error) {
@@ -573,9 +581,10 @@ function sendToPrinter(filePath) {
   });
 }
 
-if (!existsSync(path.join(__dirname, 'uploads'))) {
-  await mkdir(path.join(__dirname, 'uploads'), { recursive: true });
+if (!existsSync(UPLOAD_DIR)) {
+  await mkdir(UPLOAD_DIR, { recursive: true });
 }
+await mkdir(PRINT_DIR, { recursive: true });
 await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
 await loadGoogleToken();
 
@@ -584,7 +593,7 @@ app.listen(PORT, HOST, () => {
   for (const address of getLanAddresses()) {
     console.log(`LAN access: http://${address}:${PORT}`);
   }
-  console.log(PRINT_DRY_RUN ? 'Dry run mode is on.' : 'Printing is enabled.');
+  console.log(SERVER_PRINTING_ENABLED ? 'Printing is enabled.' : 'Hosted/preview mode is on.');
 });
 
 function getLanAddresses() {

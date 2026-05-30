@@ -9,6 +9,10 @@ const previewPages = document.querySelector('#preview-pages');
 const previewEmpty = document.querySelector('#preview-empty');
 const googleButton = document.querySelector('#google-button');
 const googleStatus = document.querySelector('#google-status');
+const appMode = document.querySelector('#app-mode');
+const submitButton = document.querySelector('#submit-button');
+const browserPrintButton = document.querySelector('#browser-print-button');
+const downloadButton = document.querySelector('#download-button');
 const previewPicker = document.createElement('div');
 
 let printSizes = [
@@ -26,6 +30,8 @@ let googlePhotos = [];
 let previewAbortController;
 let previewRequestId = 0;
 let selectedPreviewIndex = null;
+let currentPages = [];
+let serverPrintingEnabled = false;
 const PAGE_WIDTH = 2550;
 const PAGE_HEIGHT = 3300;
 
@@ -38,9 +44,12 @@ fetch('/api/options')
   .then((response) => response.json())
   .then((options) => {
     printSizes = options.sizes;
-    statusText.textContent = options.dryRun
-      ? 'Preview mode is on. No printer jobs will be sent yet.'
-      : `Ready to print to ${options.printerName}.`;
+    serverPrintingEnabled = Boolean(options.serverPrintingEnabled);
+    appMode.textContent = serverPrintingEnabled ? 'Local photo printer' : 'Hosted print layout';
+    submitButton.textContent = serverPrintingEnabled ? 'Print photos' : 'Prepare pages';
+    statusText.textContent = serverPrintingEnabled
+      ? `Ready to print to ${options.printerName}.`
+      : 'Prepare printable pages, then print or download them from your browser.';
 
     if (options.googlePhotosEnabled) {
       googleButton.disabled = false;
@@ -69,9 +78,8 @@ photoInput.addEventListener('change', () => {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const submitButton = form.querySelector('button[type="submit"]');
   submitButton.disabled = true;
-  statusText.textContent = 'Preparing pages...';
+  statusText.textContent = serverPrintingEnabled ? 'Printing pages...' : 'Preparing pages...';
 
   try {
     syncHiddenInputs();
@@ -123,6 +131,51 @@ googleButton.addEventListener('click', async () => {
     statusText.textContent = error.message;
   } finally {
     googleButton.disabled = false;
+  }
+});
+
+browserPrintButton.addEventListener('click', () => {
+  if (!currentPages.length) {
+    return;
+  }
+
+  const printWindow = window.open('', 'photo-print-pages');
+  if (!printWindow) {
+    statusText.textContent = 'Allow popups to print the prepared pages.';
+    return;
+  }
+
+  const pageImages = currentPages
+    .map((page, index) => `<img src="${page.previewUrl}" alt="Prepared print page ${index + 1}">`)
+    .join('');
+  printWindow.document.write(`<!doctype html>
+    <html>
+      <head>
+        <title>Prepared photo pages</title>
+        <style>
+          @page { size: Letter; margin: 0; }
+          * { box-sizing: border-box; }
+          body { margin: 0; }
+          img { display: block; width: 8.5in; height: 11in; page-break-after: always; }
+        </style>
+      </head>
+      <body>${pageImages}</body>
+    </html>`);
+  printWindow.document.close();
+  printWindow.addEventListener('load', () => {
+    printWindow.focus();
+    printWindow.print();
+  }, { once: true });
+});
+
+downloadButton.addEventListener('click', () => {
+  for (const [index, page] of currentPages.entries()) {
+    const link = document.createElement('a');
+    link.href = page.previewUrl;
+    link.download = `photo-page-${index + 1}.jpg`;
+    document.body.append(link);
+    link.click();
+    link.remove();
   }
 });
 
@@ -199,9 +252,13 @@ async function updatePreview() {
   const photos = getSelectedPhotos();
   if (!photos.length) {
     selectedPreviewIndex = null;
+    currentPages = [];
+    updatePreparedPageActions();
     previewPages.replaceChildren();
     previewEmpty.hidden = false;
-    statusText.textContent = 'Preview mode is on. No printer jobs will be sent yet.';
+    statusText.textContent = serverPrintingEnabled
+      ? 'Choose photos to preview the print pages.'
+      : 'Prepare printable pages, then print or download them from your browser.';
     return;
   }
 
@@ -238,6 +295,7 @@ async function updatePreview() {
 }
 
 function renderPreviewPages(pages) {
+  currentPages = pages;
   previewPages.replaceChildren(
     ...pages.map((page, index) => {
       const figure = document.createElement('figure');
@@ -254,6 +312,13 @@ function renderPreviewPages(pages) {
     }),
   );
   previewEmpty.hidden = true;
+  updatePreparedPageActions();
+}
+
+function updatePreparedPageActions() {
+  const hasPages = currentPages.length > 0;
+  browserPrintButton.disabled = !hasPages;
+  downloadButton.disabled = !hasPages;
 }
 
 function createPreviewHotspot(item) {

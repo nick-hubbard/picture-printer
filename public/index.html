@@ -10,8 +10,8 @@
     <main class="shell">
       <section class="panel" aria-labelledby="title">
         <div>
-          <p class="eyebrow">Local photo printer</p>
-          <h1 id="title">Print photos</h1>
+          <p id="app-mode" class="eyebrow">Photo print layout</p>
+          <h1 id="title">Prepare photos</h1>
         </div>
 
         <form id="print-form">
@@ -25,7 +25,7 @@
           <input id="sizes" name="sizes" type="hidden" value="[]" />
           <input id="google-photo-ids" name="googlePhotoIds" type="hidden" value="[]" />
 
-          <button type="submit">Print photos</button>
+          <button id="submit-button" type="submit">Prepare pages</button>
         </form>
 
         <div class="google-row">
@@ -39,6 +39,10 @@
       </section>
 
       <section class="preview" aria-label="Print preview">
+        <div class="preview-actions" aria-label="Prepared page actions">
+          <button id="browser-print-button" class="secondary" type="button" disabled>Print from browser</button>
+          <button id="download-button" class="secondary" type="button" disabled>Download pages</button>
+        </div>
         <div id="preview-pages" class="preview-pages"></div>
         <p id="preview-empty">Choose photos to preview the print pages.</p>
       </section>

@@ -172,6 +172,13 @@ button:disabled {
   overflow: auto;
 }
 
+.preview-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 180px));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
 .preview-pages {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -288,5 +295,9 @@ button:disabled {
 
   .preview {
     min-height: 300px;
+  }
+
+  .preview-actions {
+    grid-template-columns: 1fr;
   }
 }

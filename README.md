@@ -14,6 +14,35 @@ Open `http://localhost:3000`.
 
 To open the app from another device on the same network, keep `HOST=0.0.0.0` in `.env`, restart the app, and use one of the `LAN access` URLs printed in the terminal.
 
+## Deploy To Vercel
+
+Use the Express preset, keep the root directory as `./`, and add these environment variables:
+
+```sh
+PRINT_DRY_RUN=true
+HOST=0.0.0.0
+```
+
+On Vercel the app runs in hosted layout mode. It prepares Letter-size page images and lets you print or download them from the browser, but it does not send jobs directly to a local printer. Direct printer access only works when the app is running on the computer that can reach the printer.
+
+Generated files are stored in Vercel's temporary `/tmp` filesystem. That works for preparing and immediately printing/downloading pages, but it is not durable storage.
+
+For Google Photos on Vercel, add your deployed callback URL to the Google OAuth client:
+
+```sh
+https://YOUR-VERCEL-URL.vercel.app/auth/google/callback
+```
+
+Then set these Vercel environment variables:
+
+```sh
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=https://YOUR-VERCEL-URL.vercel.app/auth/google/callback
+```
+
+Google Photos connection tokens are still stored on temporary local storage in this version, so they may need to be reconnected after a deployment or cold start. Use durable storage such as Vercel KV, Postgres, or another database if you need persistent hosted Google Photos sessions.
+
 ## Run With Docker And HTTPS
 
 Docker runs the Node app behind an nginx HTTPS reverse proxy. This lets another computer on the same network open the app at `https://HOST_OR_IP`.
