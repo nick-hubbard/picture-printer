@@ -207,20 +207,31 @@ button:disabled {
 }
 
 .preview-hotspot:hover,
-.preview-hotspot:focus-visible {
+.preview-hotspot:focus-visible,
+.preview-hotspot.is-selected {
   border-color: #2f7d69;
   background: rgb(47 125 105 / 12%);
   outline: none;
 }
 
+.preview-hotspot.is-selected {
+  box-shadow: inset 0 0 0 2px #2f7d69;
+}
+
 .preview-picker {
   position: fixed;
   z-index: 20;
-  width: 150px;
-  padding: 10px;
+  display: grid;
+  gap: 12px;
+  width: 190px;
+  padding: 12px;
   border: 1px solid #b9b0a2;
   background: #fffdf9;
   box-shadow: 0 14px 38px rgb(32 33 36 / 22%);
+}
+
+.preview-picker:focus {
+  outline: none;
 }
 
 .preview-picker label {
@@ -237,6 +248,14 @@ button:disabled {
 
 .preview-picker select {
   min-height: 40px;
+}
+
+.preview-remove {
+  width: 100%;
+  min-height: 42px;
+  border-color: #9d2f2f;
+  background: #9d2f2f;
+  color: #ffffff;
 }
 
 .preview figcaption {

@@ -20,15 +20,18 @@ let printSizes = [
   { value: '4x6', label: '4 x 6' },
   { value: '5x7', label: '5 x 7' },
 ];
+let localPhotos = [];
 let selectedSizes = [];
 let googlePhotos = [];
 let previewAbortController;
 let previewRequestId = 0;
+let selectedPreviewIndex = null;
 const PAGE_WIDTH = 2550;
 const PAGE_HEIGHT = 3300;
 
 previewPicker.className = 'preview-picker';
 previewPicker.hidden = true;
+previewPicker.tabIndex = -1;
 document.body.append(previewPicker);
 
 fetch('/api/options')
@@ -50,11 +53,16 @@ fetch('/api/options')
 
 photoInput.addEventListener('change', () => {
   const files = [...photoInput.files];
-  selectedSizes = [...files, ...googlePhotos].map((_, index) => selectedSizes[index] || '4x6');
+  const previousLocalCount = localPhotos.length;
+  localPhotos = [...localPhotos, ...files];
+  selectedSizes = [
+    ...selectedSizes.slice(0, previousLocalCount),
+    ...files.map(() => '4x6'),
+    ...selectedSizes.slice(previousLocalCount),
+  ];
+  photoInput.value = '';
   syncHiddenInputs();
-  fileName.textContent = files.length || googlePhotos.length
-    ? `${files.length} photo${files.length === 1 ? '' : 's'} selected`
-    : 'JPG, PNG, HEIC, or WebP';
+  updateSelectedPhotoCount();
   renderPhotoList(getSelectedPhotos());
   updatePreview();
 });
@@ -141,6 +149,20 @@ document.addEventListener('click', (event) => {
   previewPicker.hidden = true;
 });
 
+document.addEventListener('keydown', (event) => {
+  if (!['Delete', 'Backspace'].includes(event.key) || selectedPreviewIndex === null) {
+    return;
+  }
+
+  const target = event.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) {
+    return;
+  }
+
+  event.preventDefault();
+  removePhoto(selectedPreviewIndex);
+});
+
 function renderPhotoList(photos) {
   photoList.replaceChildren(
     ...photos.map((photo, index) => {
@@ -176,6 +198,7 @@ function renderPhotoList(photos) {
 async function updatePreview() {
   const photos = getSelectedPhotos();
   if (!photos.length) {
+    selectedPreviewIndex = null;
     previewPages.replaceChildren();
     previewEmpty.hidden = false;
     statusText.textContent = 'Preview mode is on. No printer jobs will be sent yet.';
@@ -236,18 +259,30 @@ function renderPreviewPages(pages) {
 function createPreviewHotspot(item) {
   const button = document.createElement('button');
   button.className = 'preview-hotspot';
+  if (item.index === selectedPreviewIndex) {
+    button.classList.add('is-selected');
+  }
   button.type = 'button';
   button.style.left = `${(item.left / PAGE_WIDTH) * 100}%`;
   button.style.top = `${(item.top / PAGE_HEIGHT) * 100}%`;
   button.style.width = `${(item.width / PAGE_WIDTH) * 100}%`;
   button.style.height = `${(item.height / PAGE_HEIGHT) * 100}%`;
+  button.dataset.photoIndex = String(item.index);
   button.setAttribute('aria-label', `Change size for photo ${item.index + 1}`);
   button.addEventListener('click', (event) => {
     event.stopPropagation();
+    selectedPreviewIndex = item.index;
     focusPhotoSize(item.index);
     showPreviewPicker(item.index, button);
+    updateSelectedPreviewHotspot();
   });
   return button;
+}
+
+function updateSelectedPreviewHotspot() {
+  for (const hotspot of previewPages.querySelectorAll('.preview-hotspot')) {
+    hotspot.classList.toggle('is-selected', Number(hotspot.dataset.photoIndex) === selectedPreviewIndex);
+  }
 }
 
 function focusPhotoSize(index) {
@@ -272,6 +307,7 @@ function showPreviewPicker(index, anchor) {
   const label = document.createElement('label');
   const labelText = document.createElement('span');
   const select = document.createElement('select');
+  const removeButton = document.createElement('button');
   labelText.textContent = 'Size';
   select.setAttribute('aria-label', `Preview size for photo ${index + 1}`);
 
@@ -295,7 +331,14 @@ function showPreviewPicker(index, anchor) {
   });
 
   label.append(labelText, select);
-  previewPicker.append(label);
+  removeButton.className = 'preview-remove';
+  removeButton.type = 'button';
+  removeButton.textContent = 'Remove image';
+  removeButton.addEventListener('click', () => {
+    removePhoto(index);
+  });
+
+  previewPicker.append(label, removeButton);
   previewPicker.hidden = false;
 
   const anchorRect = anchor.getBoundingClientRect();
@@ -310,12 +353,12 @@ function showPreviewPicker(index, anchor) {
   );
   previewPicker.style.left = `${left}px`;
   previewPicker.style.top = `${top}px`;
-  select.focus();
+  previewPicker.focus();
 }
 
 function getSelectedPhotos() {
   return [
-    ...[...photoInput.files].map((file) => ({ name: file.name, source: 'local' })),
+    ...localPhotos.map((file) => ({ name: file.name, source: 'local' })),
     ...googlePhotos,
   ];
 }
@@ -324,8 +367,30 @@ function addGooglePhotos(items) {
   googlePhotos = [...googlePhotos, ...items.map((item) => ({ ...item, source: 'google' }))];
   selectedSizes = getSelectedPhotos().map((_, index) => selectedSizes[index] || '4x6');
   syncHiddenInputs();
-  fileName.textContent = `${getSelectedPhotos().length} photo${getSelectedPhotos().length === 1 ? '' : 's'} selected`;
+  updateSelectedPhotoCount();
   googleStatus.textContent = 'Connected';
+  renderPhotoList(getSelectedPhotos());
+  updatePreview();
+}
+
+function removePhoto(index) {
+  previewPicker.hidden = true;
+
+  if (index < localPhotos.length) {
+    localPhotos.splice(index, 1);
+  } else {
+    googlePhotos.splice(index - localPhotos.length, 1);
+  }
+
+  selectedSizes.splice(index, 1);
+  const photoCount = getSelectedPhotos().length;
+  if (!photoCount) {
+    selectedPreviewIndex = null;
+  } else if (selectedPreviewIndex !== null && selectedPreviewIndex >= index) {
+    selectedPreviewIndex = Math.max(0, selectedPreviewIndex - 1);
+  }
+  syncHiddenInputs();
+  updateSelectedPhotoCount();
   renderPhotoList(getSelectedPhotos());
   updatePreview();
 }
@@ -333,7 +398,7 @@ function addGooglePhotos(items) {
 function buildPrintFormData() {
   syncHiddenInputs();
   const formData = new FormData();
-  for (const file of photoInput.files) {
+  for (const file of localPhotos) {
     formData.append('photos', file);
   }
   formData.append('sizes', sizesInput.value);
@@ -344,6 +409,13 @@ function buildPrintFormData() {
 function syncHiddenInputs() {
   sizesInput.value = JSON.stringify(selectedSizes);
   googlePhotoIdsInput.value = JSON.stringify(googlePhotos.map((photo) => photo.id));
+}
+
+function updateSelectedPhotoCount() {
+  const photoCount = getSelectedPhotos().length;
+  fileName.textContent = photoCount
+    ? `${photoCount} photo${photoCount === 1 ? '' : 's'} selected`
+    : 'JPG, PNG, HEIC, or WebP';
 }
 
 async function waitForGooglePhotos(sessionId) {
