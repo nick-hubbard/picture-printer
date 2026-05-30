@@ -199,7 +199,7 @@ document.addEventListener('click', (event) => {
     return;
   }
 
-  previewPicker.hidden = true;
+  hidePreviewPicker();
 });
 
 document.addEventListener('keydown', (event) => {
@@ -215,6 +215,11 @@ document.addEventListener('keydown', (event) => {
   event.preventDefault();
   removePhoto(selectedPreviewIndex);
 });
+
+function hidePreviewPicker() {
+  previewPicker.hidden = true;
+  previewPicker.replaceChildren();
+}
 
 function renderPhotoList(photos) {
   photoList.replaceChildren(
@@ -439,7 +444,7 @@ function addGooglePhotos(items) {
 }
 
 function removePhoto(index) {
-  previewPicker.hidden = true;
+  hidePreviewPicker();
 
   if (index < localPhotos.length) {
     localPhotos.splice(index, 1);
@@ -449,10 +454,10 @@ function removePhoto(index) {
 
   selectedSizes.splice(index, 1);
   const photoCount = getSelectedPhotos().length;
-  if (!photoCount) {
+  if (!photoCount || selectedPreviewIndex === index) {
     selectedPreviewIndex = null;
-  } else if (selectedPreviewIndex !== null && selectedPreviewIndex >= index) {
-    selectedPreviewIndex = Math.max(0, selectedPreviewIndex - 1);
+  } else if (selectedPreviewIndex !== null && selectedPreviewIndex > index) {
+    selectedPreviewIndex -= 1;
   }
   syncHiddenInputs();
   updateSelectedPhotoCount();
