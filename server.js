@@ -3,7 +3,7 @@ import express from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import { execFile } from 'node:child_process';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', true);
 const upload = multer({
   dest: path.join(__dirname, 'uploads'),
   limits: { fileSize: 25 * 1024 * 1024, files: 30 },
@@ -28,9 +29,10 @@ const PRINT_DRY_RUN = process.env.PRINT_DRY_RUN !== 'false';
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
 const PRINT_DIR = path.join(__dirname, 'prints');
 const GOOGLE_PHOTOS_DIR = path.join(__dirname, 'google-photos');
+const GOOGLE_TOKEN_PATH = path.join(GOOGLE_PHOTOS_DIR, '.google-token.json');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `http://localhost:${PORT}/auth/google/callback`;
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || '';
 const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const googlePhotos = new Map();
 let googleToken;
@@ -67,8 +69,8 @@ app.get('/api/options', (_req, res) => {
   });
 });
 
-app.get('/auth/google', (_req, res) => {
-  const authUrl = createGoogleAuthUrl();
+app.get('/auth/google', (req, res) => {
+  const authUrl = createGoogleAuthUrl(req);
   if (!authUrl) {
     return res.status(400).send('Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before connecting Google Photos.');
   }
@@ -85,9 +87,12 @@ app.get('/auth/google/callback', async (req, res) => {
   }
 
   try {
-    googleToken = await exchangeGoogleCode(String(code));
-    return res.send('<script>window.close();</script><p>Google Photos connected. You can close this window.</p>');
+    googleToken = await exchangeGoogleCode(String(code), getGoogleRedirectUri(req));
+    await saveGoogleToken();
+    console.log(`Google Photos connected with redirect URI: ${getGoogleRedirectUri(req)}`);
+    return res.send('<script>window.opener?.postMessage({ type: "google-photos-connected" }, window.location.origin); window.close();</script><p>Google Photos connected. You can close this window.</p>');
   } catch (exchangeError) {
+    console.error('Google authorization callback failed:', exchangeError);
     return res.status(500).send(exchangeError.message || 'Unable to connect Google Photos.');
   }
 });
@@ -99,12 +104,12 @@ app.get('/api/google-photos/status', (_req, res) => {
   });
 });
 
-app.post('/api/google-photos/session', async (_req, res) => {
+app.post('/api/google-photos/session', async (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     return res.status(400).json({ error: 'Google Photos is not configured yet.' });
   }
   if (!hasGoogleToken()) {
-    return res.status(401).json({ authUrl: createGoogleAuthUrl() });
+    return res.status(401).json({ authUrl: createGoogleAuthUrl(req) });
   }
 
   try {
@@ -385,7 +390,7 @@ function hasGoogleToken() {
   return Boolean(googleToken?.access_token && Date.now() < googleToken.expiresAt - 60_000);
 }
 
-function createGoogleAuthUrl() {
+function createGoogleAuthUrl(req) {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     return '';
   }
@@ -393,7 +398,7 @@ function createGoogleAuthUrl() {
   const state = createGoogleState();
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: GOOGLE_REDIRECT_URI,
+    redirect_uri: getGoogleRedirectUri(req),
     response_type: 'code',
     scope: GOOGLE_PHOTOS_SCOPE,
     state,
@@ -401,6 +406,13 @@ function createGoogleAuthUrl() {
     prompt: 'consent',
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+function getGoogleRedirectUri(req) {
+  if (GOOGLE_REDIRECT_URI) {
+    return GOOGLE_REDIRECT_URI;
+  }
+  return `${req.protocol}://${req.get('host')}/auth/google/callback`;
 }
 
 function createGoogleState() {
@@ -428,7 +440,7 @@ function isValidGoogleState(state) {
   return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
 }
 
-async function exchangeGoogleCode(code) {
+async function exchangeGoogleCode(code, redirectUri) {
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -436,7 +448,7 @@ async function exchangeGoogleCode(code) {
       code,
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
-      redirect_uri: GOOGLE_REDIRECT_URI,
+      redirect_uri: redirectUri,
       grant_type: 'authorization_code',
     }),
   });
@@ -448,6 +460,21 @@ async function exchangeGoogleCode(code) {
     ...token,
     expiresAt: Date.now() + Number(token.expires_in || 3600) * 1000,
   };
+}
+
+async function loadGoogleToken() {
+  try {
+    googleToken = JSON.parse(await readFile(GOOGLE_TOKEN_PATH, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn('Unable to load saved Google Photos token:', error.message);
+    }
+  }
+}
+
+async function saveGoogleToken() {
+  await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
+  await writeFile(GOOGLE_TOKEN_PATH, JSON.stringify(googleToken), { mode: 0o600 });
 }
 
 async function googlePickerFetch(url, options = {}) {
@@ -549,6 +576,8 @@ function sendToPrinter(filePath) {
 if (!existsSync(path.join(__dirname, 'uploads'))) {
   await mkdir(path.join(__dirname, 'uploads'), { recursive: true });
 }
+await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
+await loadGoogleToken();
 
 app.listen(PORT, HOST, () => {
   console.log(`Photo printer app running at http://localhost:${PORT}`);

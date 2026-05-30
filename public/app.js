@@ -118,6 +118,16 @@ googleButton.addEventListener('click', async () => {
   }
 });
 
+window.addEventListener('message', (event) => {
+  if (event.origin !== window.location.origin || event.data?.type !== 'google-photos-connected') {
+    return;
+  }
+
+  googleStatus.textContent = 'Connected';
+  statusText.textContent = 'Google Photos connected. Opening picker...';
+  googleButton.click();
+});
+
 document.addEventListener('click', (event) => {
   if (previewPicker.hidden) {
     return;
