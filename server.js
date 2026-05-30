@@ -33,13 +33,14 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PRINT_DRY_RUN = process.env.PRINT_DRY_RUN !== 'false';
 const SERVER_PRINTING_ENABLED = !IS_VERCEL && !PRINT_DRY_RUN;
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
-const GOOGLE_TOKEN_PATH = path.join(GOOGLE_PHOTOS_DIR, '.google-token.json');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || '';
 const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
+const SESSION_SECRET = process.env.SESSION_SECRET || GOOGLE_CLIENT_SECRET;
+const TOKEN_COOKIE = 'gphotos_token';
+const TOKEN_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
 const googlePhotos = new Map();
-let googleToken;
 const DPI = 300;
 const PAGE = {
   label: 'Letter',
@@ -63,7 +64,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/prints', express.static(PRINT_DIR));
 app.use('/google-photos', express.static(GOOGLE_PHOTOS_DIR));
 
-app.get('/api/options', (_req, res) => {
+app.get('/api/options', (req, res) => {
   res.json({
     sizes: Object.entries(PRINT_SIZES).map(([value, size]) => ({ value, label: size.label })),
     dryRun: PRINT_DRY_RUN,
@@ -71,7 +72,7 @@ app.get('/api/options', (_req, res) => {
     serverPrintingEnabled: SERVER_PRINTING_ENABLED,
     printerName: PRINTER_NAME || 'System default printer',
     googlePhotosEnabled: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
-    googlePhotosConnected: hasGoogleToken(),
+    googlePhotosConnected: hasUsableToken(readTokenCookie(req)),
   });
 });
 
@@ -93,8 +94,8 @@ app.get('/auth/google/callback', async (req, res) => {
   }
 
   try {
-    googleToken = await exchangeGoogleCode(String(code), getGoogleRedirectUri(req));
-    await saveGoogleToken();
+    const token = await exchangeGoogleCode(String(code), getGoogleRedirectUri(req));
+    writeTokenCookie(res, req, token);
     console.log(`Google Photos connected with redirect URI: ${getGoogleRedirectUri(req)}`);
     return res.send('<script>window.opener?.postMessage({ type: "google-photos-connected" }, window.location.origin); window.close();</script><p>Google Photos connected. You can close this window.</p>');
   } catch (exchangeError) {
@@ -103,10 +104,15 @@ app.get('/auth/google/callback', async (req, res) => {
   }
 });
 
-app.get('/api/google-photos/status', (_req, res) => {
+app.post('/auth/google/logout', (req, res) => {
+  clearTokenCookie(res, req);
+  return res.json({ ok: true });
+});
+
+app.get('/api/google-photos/status', (req, res) => {
   res.json({
     configured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
-    connected: hasGoogleToken(),
+    connected: hasUsableToken(readTokenCookie(req)),
   });
 });
 
@@ -114,12 +120,13 @@ app.post('/api/google-photos/session', async (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     return res.status(400).json({ error: 'Google Photos is not configured yet.' });
   }
-  if (!hasGoogleToken()) {
+  const token = await ensureFreshToken(req, res);
+  if (!token) {
     return res.status(401).json({ authUrl: createGoogleAuthUrl(req) });
   }
 
   try {
-    const session = await googlePickerFetch('https://photospicker.googleapis.com/v1/sessions', {
+    const session = await googlePickerFetch('https://photospicker.googleapis.com/v1/sessions', token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -134,8 +141,12 @@ app.post('/api/google-photos/session', async (req, res) => {
 });
 
 app.get('/api/google-photos/session/:sessionId', async (req, res) => {
+  const token = await ensureFreshToken(req, res);
+  if (!token) {
+    return res.status(401).json({ error: 'Google Photos is not connected.' });
+  }
   try {
-    const session = await googlePickerFetch(`https://photospicker.googleapis.com/v1/sessions/${req.params.sessionId}`);
+    const session = await googlePickerFetch(`https://photospicker.googleapis.com/v1/sessions/${req.params.sessionId}`, token);
     return res.json(session);
   } catch (error) {
     return res.status(500).json({ error: error.message || 'Unable to check Google Photos picker.' });
@@ -143,10 +154,14 @@ app.get('/api/google-photos/session/:sessionId', async (req, res) => {
 });
 
 app.post('/api/google-photos/session/:sessionId/import', async (req, res) => {
+  const token = await ensureFreshToken(req, res);
+  if (!token) {
+    return res.status(401).json({ error: 'Google Photos is not connected.' });
+  }
   try {
-    const items = await listGooglePickedItems(req.params.sessionId);
-    const importedItems = await Promise.all(items.map(importGooglePhoto));
-    await googlePickerFetch(`https://photospicker.googleapis.com/v1/sessions/${req.params.sessionId}`, {
+    const items = await listGooglePickedItems(req.params.sessionId, token);
+    const importedItems = await Promise.all(items.map((item) => importGooglePhoto(item, token)));
+    await googlePickerFetch(`https://photospicker.googleapis.com/v1/sessions/${req.params.sessionId}`, token, {
       method: 'DELETE',
     });
     return res.json({ items: importedItems });
@@ -404,8 +419,148 @@ function parseJsonArray(value) {
   }
 }
 
-function hasGoogleToken() {
-  return Boolean(googleToken?.access_token && Date.now() < googleToken.expiresAt - 60_000);
+function isAccessTokenLive(token) {
+  return Boolean(token?.access_token && Date.now() < token.expiresAt - 60_000);
+}
+
+function hasUsableToken(token) {
+  return Boolean(token && (isAccessTokenLive(token) || token.refresh_token));
+}
+
+function getSessionKey() {
+  if (!SESSION_SECRET) {
+    throw new Error('SESSION_SECRET (or GOOGLE_CLIENT_SECRET) must be set to encrypt sessions.');
+  }
+  return crypto.createHash('sha256').update(SESSION_SECRET).digest();
+}
+
+function encryptToken(token) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getSessionKey(), iv);
+  const data = Buffer.concat([cipher.update(JSON.stringify(token), 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, data]).toString('base64url');
+}
+
+function decryptToken(value) {
+  try {
+    const buf = Buffer.from(value, 'base64url');
+    if (buf.length < 28) return null;
+    const iv = buf.subarray(0, 12);
+    const authTag = buf.subarray(12, 28);
+    const data = buf.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getSessionKey(), iv);
+    decipher.setAuthTag(authTag);
+    const plain = Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+    return JSON.parse(plain);
+  } catch {
+    return null;
+  }
+}
+
+function parseCookies(header) {
+  const cookies = {};
+  if (!header) return cookies;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const name = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (!name) continue;
+    try {
+      cookies[name] = decodeURIComponent(value);
+    } catch {
+      cookies[name] = value;
+    }
+  }
+  return cookies;
+}
+
+function readTokenCookie(req) {
+  const cookies = parseCookies(req.headers.cookie);
+  const raw = cookies[TOKEN_COOKIE];
+  if (!raw) return null;
+  return decryptToken(raw);
+}
+
+function isHttpsRequest(req) {
+  return req.protocol === 'https' || req.secure || IS_VERCEL;
+}
+
+function writeTokenCookie(res, req, token) {
+  const value = encryptToken(token);
+  res.append(
+    'Set-Cookie',
+    [
+      `${TOKEN_COOKIE}=${encodeURIComponent(value)}`,
+      'Path=/',
+      'HttpOnly',
+      'SameSite=Lax',
+      `Max-Age=${Math.floor(TOKEN_COOKIE_MAX_AGE_MS / 1000)}`,
+      isHttpsRequest(req) ? 'Secure' : null,
+    ]
+      .filter(Boolean)
+      .join('; '),
+  );
+}
+
+function clearTokenCookie(res, req) {
+  res.append(
+    'Set-Cookie',
+    [
+      `${TOKEN_COOKIE}=`,
+      'Path=/',
+      'HttpOnly',
+      'SameSite=Lax',
+      'Max-Age=0',
+      isHttpsRequest(req) ? 'Secure' : null,
+    ]
+      .filter(Boolean)
+      .join('; '),
+  );
+}
+
+async function refreshAccessToken(refreshToken) {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    const error = new Error(payload.error_description || payload.error || 'Google token refresh failed.');
+    error.code = payload.error || 'refresh_failed';
+    throw error;
+  }
+  return {
+    ...payload,
+    refresh_token: payload.refresh_token || refreshToken,
+    expiresAt: Date.now() + Number(payload.expires_in || 3600) * 1000,
+  };
+}
+
+async function ensureFreshToken(req, res) {
+  const stored = readTokenCookie(req);
+  if (!stored) return null;
+  if (isAccessTokenLive(stored)) return stored;
+  if (!stored.refresh_token) {
+    clearTokenCookie(res, req);
+    return null;
+  }
+  try {
+    const refreshed = await refreshAccessToken(stored.refresh_token);
+    writeTokenCookie(res, req, refreshed);
+    return refreshed;
+  } catch (error) {
+    console.error('Failed to refresh Google Photos token:', error.message);
+    clearTokenCookie(res, req);
+    return null;
+  }
 }
 
 function createGoogleAuthUrl(req) {
@@ -480,23 +635,8 @@ async function exchangeGoogleCode(code, redirectUri) {
   };
 }
 
-async function loadGoogleToken() {
-  try {
-    googleToken = JSON.parse(await readFile(GOOGLE_TOKEN_PATH, 'utf8'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.warn('Unable to load saved Google Photos token:', error.message);
-    }
-  }
-}
-
-async function saveGoogleToken() {
-  await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
-  await writeFile(GOOGLE_TOKEN_PATH, JSON.stringify(googleToken), { mode: 0o600 });
-}
-
-async function googlePickerFetch(url, options = {}) {
-  if (!hasGoogleToken()) {
+async function googlePickerFetch(url, token, options = {}) {
+  if (!token?.access_token) {
     throw new Error('Google Photos is not connected.');
   }
 
@@ -504,7 +644,7 @@ async function googlePickerFetch(url, options = {}) {
     ...options,
     headers: {
       ...(options.headers || {}),
-      Authorization: `Bearer ${googleToken.access_token}`,
+      Authorization: `Bearer ${token.access_token}`,
     },
   });
 
@@ -519,7 +659,7 @@ async function googlePickerFetch(url, options = {}) {
   return payload;
 }
 
-async function listGooglePickedItems(sessionId) {
+async function listGooglePickedItems(sessionId, token) {
   const items = [];
   let pageToken = '';
 
@@ -528,7 +668,7 @@ async function listGooglePickedItems(sessionId) {
     if (pageToken) {
       params.set('pageToken', pageToken);
     }
-    const page = await googlePickerFetch(`https://photospicker.googleapis.com/v1/mediaItems?${params.toString()}`);
+    const page = await googlePickerFetch(`https://photospicker.googleapis.com/v1/mediaItems?${params.toString()}`, token);
     items.push(...(page.mediaItems || []));
     pageToken = page.nextPageToken || '';
   } while (pageToken);
@@ -536,7 +676,7 @@ async function listGooglePickedItems(sessionId) {
   return items.filter((item) => item.type === 'PHOTO' && item.mediaFile?.baseUrl);
 }
 
-async function importGooglePhoto(item) {
+async function importGooglePhoto(item, token) {
   await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
   const id = crypto.randomUUID();
   const mediaFile = item.mediaFile;
@@ -545,7 +685,7 @@ async function importGooglePhoto(item) {
   const outputPath = path.join(GOOGLE_PHOTOS_DIR, `${id}.${extension}`);
   const downloadUrl = `${mediaFile.baseUrl}=d`;
   const response = await fetch(downloadUrl, {
-    headers: { Authorization: `Bearer ${googleToken.access_token}` },
+    headers: { Authorization: `Bearer ${token.access_token}` },
   });
 
   if (!response.ok) {
@@ -596,7 +736,6 @@ if (!existsSync(UPLOAD_DIR)) {
 }
 await mkdir(PRINT_DIR, { recursive: true });
 await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
-await loadGoogleToken();
 
 app.listen(PORT, HOST, () => {
   console.log(`Photo printer app running at http://localhost:${PORT}`);

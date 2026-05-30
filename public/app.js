@@ -7,6 +7,7 @@ const statusText = document.querySelector('#status');
 const previewPages = document.querySelector('#preview-pages');
 const previewEmpty = document.querySelector('#preview-empty');
 const googleButton = document.querySelector('#google-button');
+const googleDisconnectButton = document.querySelector('#google-disconnect');
 const googleStatus = document.querySelector('#google-status');
 const appMode = document.querySelector('#app-mode');
 const submitButton = document.querySelector('#submit-button');
@@ -52,7 +53,7 @@ fetch('/api/options')
 
     if (options.googlePhotosEnabled) {
       googleButton.disabled = false;
-      googleStatus.textContent = options.googlePhotosConnected ? 'Connected' : 'Ready to connect';
+      setGoogleConnectedUi(Boolean(options.googlePhotosConnected));
     }
   })
   .catch(() => {
@@ -120,6 +121,7 @@ googleButton.addEventListener('click', async () => {
       throw new Error(result.error || 'Unable to open Google Photos.');
     }
 
+    setGoogleConnectedUi(true);
     window.open(result.pickerUri, 'google-photos-picker', 'width=980,height=720');
     googleStatus.textContent = 'Choose photos';
     statusText.textContent = 'Choose photos in Google Photos, then click Done.';
@@ -131,6 +133,32 @@ googleButton.addEventListener('click', async () => {
     googleButton.disabled = false;
   }
 });
+
+googleDisconnectButton.addEventListener('click', async () => {
+  googleDisconnectButton.disabled = true;
+  try {
+    const response = await fetch('/auth/google/logout', { method: 'POST' });
+    if (!response.ok) {
+      throw new Error('Unable to disconnect Google Photos.');
+    }
+    googlePhotos = [];
+    selectedSizes = getSelectedPhotos().map((_, index) => selectedSizes[index] || '4x6');
+    syncHiddenInputs();
+    updateSelectedPhotoCount();
+    setGoogleConnectedUi(false);
+    statusText.textContent = 'Disconnected from Google Photos.';
+    updatePreview();
+  } catch (error) {
+    statusText.textContent = error.message;
+  } finally {
+    googleDisconnectButton.disabled = false;
+  }
+});
+
+function setGoogleConnectedUi(connected) {
+  googleDisconnectButton.hidden = !connected;
+  googleStatus.textContent = connected ? 'Connected' : 'Ready to connect';
+}
 
 browserPrintButton.addEventListener('click', () => {
   if (!currentPages.length) {
@@ -410,7 +438,7 @@ function addGooglePhotos(items) {
   selectedSizes = getSelectedPhotos().map((_, index) => selectedSizes[index] || '4x6');
   syncHiddenInputs();
   updateSelectedPhotoCount();
-  googleStatus.textContent = 'Connected';
+  setGoogleConnectedUi(true);
   updatePreview();
 }
 

@@ -164,6 +164,12 @@ button:disabled {
   gap: 10px;
 }
 
+.google-disconnect {
+  min-height: 40px;
+  font-weight: 600;
+  color: #6e695f;
+}
+
 .status {
   min-height: 44px;
   margin: auto 0 0;
