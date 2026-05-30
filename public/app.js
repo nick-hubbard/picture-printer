@@ -146,7 +146,7 @@ browserPrintButton.addEventListener('click', () => {
   }
 
   const pageImages = currentPages
-    .map((page, index) => `<img src="${page.previewUrl}" alt="Prepared print page ${index + 1}">`)
+    .map((page, index) => `<img src="${getPageImageUrl(page)}" alt="Prepared print page ${index + 1}">`)
     .join('');
   printWindow.document.write(`<!doctype html>
     <html>
@@ -171,7 +171,7 @@ browserPrintButton.addEventListener('click', () => {
 downloadButton.addEventListener('click', () => {
   for (const [index, page] of currentPages.entries()) {
     const link = document.createElement('a');
-    link.href = page.previewUrl;
+    link.href = getPageImageUrl(page);
     link.download = `photo-page-${index + 1}.jpg`;
     document.body.append(link);
     link.click();
@@ -308,7 +308,7 @@ function renderPreviewPages(pages) {
       const image = document.createElement('img');
       const caption = document.createElement('figcaption');
       pagePreview.className = 'page-preview';
-      image.src = `${page.previewUrl}?t=${Date.now()}`;
+      image.src = getPageImageUrl(page, { cacheBust: true });
       image.alt = `Prepared print page ${index + 1}`;
       caption.textContent = `Page ${index + 1}: ${page.imageCount} photo${page.imageCount === 1 ? '' : 's'}`;
       pagePreview.append(image, ...page.items.map(createPreviewHotspot));
@@ -318,6 +318,13 @@ function renderPreviewPages(pages) {
   );
   previewEmpty.hidden = true;
   updatePreparedPageActions();
+}
+
+function getPageImageUrl(page, { cacheBust = false } = {}) {
+  if (page.previewDataUrl) {
+    return page.previewDataUrl;
+  }
+  return cacheBust ? `${page.previewUrl}?t=${Date.now()}` : page.previewUrl;
 }
 
 function updatePreparedPageActions() {

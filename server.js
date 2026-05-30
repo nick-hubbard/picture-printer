@@ -211,17 +211,7 @@ async function handlePrintRequest(req, res, { print }) {
       serverPrintingEnabled: SERVER_PRINTING_ENABLED,
       pageCount: pages.length,
       imageCount: jobs.length,
-      pages: pages.map((page) => ({
-        previewUrl: `/prints/${path.basename(page.outputPath)}`,
-        imageCount: page.items.length,
-        items: page.items.map((placement) => ({
-          index: placement.item.index,
-          left: placement.left,
-          top: placement.top,
-          width: placement.width,
-          height: placement.height,
-        })),
-      })),
+      pages: await Promise.all(pages.map(serializePage)),
       message: !print
         ? `Previewing ${jobs.length} photo${jobs.length === 1 ? '' : 's'} on ${pages.length} page${pages.length === 1 ? '' : 's'}.`
         : !SERVER_PRINTING_ENABLED
@@ -232,6 +222,26 @@ async function handlePrintRequest(req, res, { print }) {
     await cleanupUploads(uploadedFiles);
     return res.status(500).json({ error: error.message || 'Unable to print photo.' });
   }
+}
+
+async function serializePage(page) {
+  return {
+    previewUrl: `/prints/${path.basename(page.outputPath)}`,
+    previewDataUrl: IS_VERCEL ? await fileToDataUrl(page.outputPath) : undefined,
+    imageCount: page.items.length,
+    items: page.items.map((placement) => ({
+      index: placement.item.index,
+      left: placement.left,
+      top: placement.top,
+      width: placement.width,
+      height: placement.height,
+    })),
+  };
+}
+
+async function fileToDataUrl(filePath) {
+  const image = await readFile(filePath);
+  return `data:image/jpeg;base64,${image.toString('base64')}`;
 }
 
 async function composePages(jobs) {
