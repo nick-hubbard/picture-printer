@@ -13,6 +13,8 @@ const appMode = document.querySelector('#app-mode');
 const submitButton = document.querySelector('#submit-button');
 const browserPrintButton = document.querySelector('#browser-print-button');
 const downloadButton = document.querySelector('#download-button');
+const progressOverlay = document.querySelector('#progress-overlay');
+const progressStatus = document.querySelector('#progress-status');
 const previewPicker = document.createElement('div');
 
 let printSizes = [
@@ -62,6 +64,11 @@ fetch('/api/options')
 
 photoInput.addEventListener('change', () => {
   const files = [...photoInput.files];
+  if (!files.length) {
+    return;
+  }
+
+  showProgress('Adding photos...');
   const previousLocalCount = localPhotos.length;
   localPhotos = [...localPhotos, ...files];
   selectedSizes = [
@@ -78,7 +85,7 @@ photoInput.addEventListener('change', () => {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   submitButton.disabled = true;
-  statusText.textContent = serverPrintingEnabled ? 'Printing pages...' : 'Preparing pages...';
+  showProgress(serverPrintingEnabled ? 'Printing pages...' : 'Preparing pages...');
 
   try {
     syncHiddenInputs();
@@ -97,6 +104,7 @@ form.addEventListener('submit', async (event) => {
   } catch (error) {
     statusText.textContent = error.message;
   } finally {
+    hideProgress();
     submitButton.disabled = false;
   }
 });
@@ -125,9 +133,11 @@ googleButton.addEventListener('click', async () => {
     window.open(result.pickerUri, 'google-photos-picker', 'width=980,height=720');
     googleStatus.textContent = 'Choose photos';
     statusText.textContent = 'Choose photos in Google Photos, then click Done.';
+    showProgress('Waiting for Google Photos...');
     const importedItems = await waitForGooglePhotos(result.sessionId);
     addGooglePhotos(importedItems);
   } catch (error) {
+    hideProgress();
     statusText.textContent = error.message;
   } finally {
     googleButton.disabled = false;
@@ -272,7 +282,7 @@ async function updatePreview() {
   previewAbortController = new AbortController();
   const requestId = ++previewRequestId;
   syncHiddenInputs();
-  statusText.textContent = 'Updating preview...';
+  showProgress('Updating preview...');
 
   try {
     const response = await fetch('/api/preview', {
@@ -297,7 +307,23 @@ async function updatePreview() {
       return;
     }
     statusText.textContent = error.message;
+  } finally {
+    if (requestId === previewRequestId) {
+      hideProgress();
+    }
   }
+}
+
+function showProgress(message) {
+  progressStatus.textContent = message;
+  progressOverlay.hidden = false;
+  document.body.setAttribute('aria-busy', 'true');
+}
+
+function hideProgress() {
+  progressOverlay.hidden = true;
+  progressStatus.textContent = '';
+  document.body.removeAttribute('aria-busy');
 }
 
 function renderPreviewPages(pages) {
@@ -495,6 +521,7 @@ async function waitForGooglePhotos(sessionId) {
     }
 
     if (session.mediaItemsSet) {
+      showProgress('Adding photos...');
       const importResponse = await fetch(`/api/google-photos/session/${sessionId}/import`, {
         method: 'POST',
       });
