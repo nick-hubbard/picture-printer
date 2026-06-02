@@ -33,6 +33,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PRINT_DRY_RUN = process.env.PRINT_DRY_RUN !== 'false';
 const SERVER_PRINTING_ENABLED = !IS_VERCEL && !PRINT_DRY_RUN;
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
+const GOOGLE_TOKEN_PATH = path.join(GOOGLE_PHOTOS_DIR, '.google-token.json');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || '';
@@ -43,6 +44,7 @@ const TOKEN_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
 const TEMP_FILE_MAX_AGE_MS = Number(process.env.TEMP_FILE_MAX_AGE_MS || 60 * 60 * 1000);
 const GOOGLE_PHOTO_DOWNLOAD_SIZE = Number(process.env.GOOGLE_PHOTO_DOWNLOAD_SIZE || 2400);
 const googlePhotos = new Map();
+let googleToken;
 const DPI = 300;
 const PAGE = {
   label: 'Letter',
@@ -74,7 +76,7 @@ app.get('/api/options', (req, res) => {
     serverPrintingEnabled: SERVER_PRINTING_ENABLED,
     printerName: PRINTER_NAME || 'System default printer',
     googlePhotosEnabled: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
-    googlePhotosConnected: hasUsableToken(readTokenCookie(req)),
+    googlePhotosConnected: hasUsableToken(readStoredGoogleToken(req)),
   });
 });
 
@@ -97,6 +99,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
   try {
     const token = await exchangeGoogleCode(String(code), getGoogleRedirectUri(req));
+    await saveGoogleToken(token);
     writeTokenCookie(res, req, token);
     console.log(`Google Photos connected with redirect URI: ${getGoogleRedirectUri(req)}`);
     return res.send('<script>window.opener?.postMessage({ type: "google-photos-connected" }, window.location.origin); window.close();</script><p>Google Photos connected. You can close this window.</p>');
@@ -106,7 +109,8 @@ app.get('/auth/google/callback', async (req, res) => {
   }
 });
 
-app.post('/auth/google/logout', (req, res) => {
+app.post('/auth/google/logout', async (req, res) => {
+  await clearSavedGoogleToken();
   clearTokenCookie(res, req);
   return res.json({ ok: true });
 });
@@ -114,7 +118,7 @@ app.post('/auth/google/logout', (req, res) => {
 app.get('/api/google-photos/status', (req, res) => {
   res.json({
     configured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
-    connected: hasUsableToken(readTokenCookie(req)),
+    connected: hasUsableToken(readStoredGoogleToken(req)),
   });
 });
 
@@ -527,6 +531,10 @@ function readTokenCookie(req) {
   return decryptToken(raw);
 }
 
+function readStoredGoogleToken(req) {
+  return readTokenCookie(req) || googleToken || null;
+}
+
 function isHttpsRequest(req) {
   return req.protocol === 'https' || req.secure || IS_VERCEL;
 }
@@ -564,6 +572,30 @@ function clearTokenCookie(res, req) {
   );
 }
 
+async function loadGoogleToken() {
+  try {
+    const saved = JSON.parse(await readFile(GOOGLE_TOKEN_PATH, 'utf8'));
+    googleToken = saved;
+  } catch {
+    googleToken = null;
+  }
+}
+
+async function saveGoogleToken(token) {
+  googleToken = token;
+  await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
+  await writeFile(GOOGLE_TOKEN_PATH, JSON.stringify(token, null, 2));
+}
+
+async function clearSavedGoogleToken() {
+  googleToken = null;
+  try {
+    await rm(GOOGLE_TOKEN_PATH, { force: true });
+  } catch {
+    // Token storage is best-effort; clearing the in-memory token is enough for this process.
+  }
+}
+
 async function refreshAccessToken(refreshToken) {
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -589,19 +621,27 @@ async function refreshAccessToken(refreshToken) {
 }
 
 async function ensureFreshToken(req, res) {
-  const stored = readTokenCookie(req);
+  const stored = readStoredGoogleToken(req);
   if (!stored) return null;
-  if (isAccessTokenLive(stored)) return stored;
+  if (isAccessTokenLive(stored)) {
+    if (!readTokenCookie(req)) {
+      writeTokenCookie(res, req, stored);
+    }
+    return stored;
+  }
   if (!stored.refresh_token) {
+    await clearSavedGoogleToken();
     clearTokenCookie(res, req);
     return null;
   }
   try {
     const refreshed = await refreshAccessToken(stored.refresh_token);
+    await saveGoogleToken(refreshed);
     writeTokenCookie(res, req, refreshed);
     return refreshed;
   } catch (error) {
     console.error('Failed to refresh Google Photos token:', error.message);
+    await clearSavedGoogleToken();
     clearTokenCookie(res, req);
     return null;
   }
@@ -781,6 +821,7 @@ if (!existsSync(UPLOAD_DIR)) {
 }
 await mkdir(PRINT_DIR, { recursive: true });
 await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
+await loadGoogleToken();
 
 app.listen(PORT, HOST, () => {
   console.log(`Photo printer app running at http://localhost:${PORT}`);

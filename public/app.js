@@ -130,14 +130,20 @@ googleButton.addEventListener('click', async () => {
     }
 
     setGoogleConnectedUi(true);
-    window.open(result.pickerUri, 'google-photos-picker', 'width=980,height=720');
+    const pickerWindow = window.open(result.pickerUri, 'google-photos-picker', 'width=980,height=720');
+    if (!pickerWindow) {
+      throw new Error('Allow popups to choose Google Photos.');
+    }
     googleStatus.textContent = 'Choose photos';
     statusText.textContent = 'Choose photos in Google Photos, then click Done.';
     showProgress('Waiting for Google Photos...');
-    const importedItems = await waitForGooglePhotos(result.sessionId);
+    const importedItems = await waitForGooglePhotos(result.sessionId, pickerWindow);
     addGooglePhotos(importedItems);
   } catch (error) {
     hideProgress();
+    if (error.message === 'Google Photos selection cancelled.') {
+      setGoogleConnectedUi(true);
+    }
     statusText.textContent = error.message;
   } finally {
     googleButton.disabled = false;
@@ -512,8 +518,12 @@ function updateSelectedPhotoCount() {
     : 'JPG, PNG, HEIC, or WebP';
 }
 
-async function waitForGooglePhotos(sessionId) {
+async function waitForGooglePhotos(sessionId, pickerWindow) {
   for (let attempt = 0; attempt < 90; attempt += 1) {
+    if (pickerWindow?.closed) {
+      throw new Error('Google Photos selection cancelled.');
+    }
+
     const response = await fetch(`/api/google-photos/session/${sessionId}`);
     const session = await response.json();
     if (!response.ok) {
