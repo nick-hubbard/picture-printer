@@ -9,6 +9,8 @@ const previewEmpty = document.querySelector('#preview-empty');
 const googleButton = document.querySelector('#google-button');
 const googleDisconnectButton = document.querySelector('#google-disconnect');
 const googleStatus = document.querySelector('#google-status');
+const accountMenuButton = document.querySelector('#account-menu-button');
+const accountMenu = document.querySelector('#account-menu');
 const appMode = document.querySelector('#app-mode');
 const submitButton = document.querySelector('#submit-button');
 const browserPrintButton = document.querySelector('#browser-print-button');
@@ -152,17 +154,18 @@ googleButton.addEventListener('click', async () => {
 
 googleDisconnectButton.addEventListener('click', async () => {
   googleDisconnectButton.disabled = true;
+  closeAccountMenu();
   try {
     const response = await fetch('/auth/google/logout', { method: 'POST' });
     if (!response.ok) {
-      throw new Error('Unable to disconnect Google Photos.');
+      throw new Error('Unable to sign out of Google Photos.');
     }
     googlePhotos = [];
     selectedSizes = getSelectedPhotos().map((_, index) => selectedSizes[index] || '4x6');
     syncHiddenInputs();
     updateSelectedPhotoCount();
     setGoogleConnectedUi(false);
-    statusText.textContent = 'Disconnected from Google Photos.';
+    statusText.textContent = 'Signed out of Google Photos.';
     updatePreview();
   } catch (error) {
     statusText.textContent = error.message;
@@ -172,9 +175,18 @@ googleDisconnectButton.addEventListener('click', async () => {
 });
 
 function setGoogleConnectedUi(connected) {
-  googleDisconnectButton.hidden = !connected;
+  accountMenuButton.hidden = !connected;
+  if (!connected) {
+    closeAccountMenu();
+  }
   googleStatus.textContent = connected ? 'Connected' : 'Ready to connect';
 }
+
+accountMenuButton.addEventListener('click', () => {
+  const expanded = accountMenuButton.getAttribute('aria-expanded') === 'true';
+  accountMenuButton.setAttribute('aria-expanded', String(!expanded));
+  accountMenu.hidden = expanded;
+});
 
 browserPrintButton.addEventListener('click', () => {
   if (!currentPages.length) {
@@ -232,11 +244,20 @@ window.addEventListener('message', (event) => {
 });
 
 document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (
+    target instanceof Node
+    && !accountMenu.hidden
+    && !accountMenu.contains(target)
+    && !accountMenuButton.contains(target)
+  ) {
+    closeAccountMenu();
+  }
+
   if (previewPicker.hidden) {
     return;
   }
 
-  const target = event.target;
   if (target instanceof Node && previewPicker.contains(target)) {
     return;
   }
@@ -252,6 +273,10 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeAccountMenu();
+  }
+
   if (!['Delete', 'Backspace'].includes(event.key) || selectedPreviewIndex === null) {
     return;
   }
@@ -264,6 +289,11 @@ document.addEventListener('keydown', (event) => {
   event.preventDefault();
   removePhoto(selectedPreviewIndex);
 });
+
+function closeAccountMenu() {
+  accountMenu.hidden = true;
+  accountMenuButton.setAttribute('aria-expanded', 'false');
+}
 
 function hidePreviewPicker() {
   previewPicker.hidden = true;
