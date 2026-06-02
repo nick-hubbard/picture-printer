@@ -27,6 +27,8 @@ On Vercel the app runs in hosted layout mode. It prepares Letter-size page image
 
 Generated files are stored in Vercel's temporary `/tmp` filesystem. That works for preparing and immediately printing/downloading pages, but it is not durable storage.
 
+Temporary uploads, prepared print pages, and imported Google Photos files are swept after one hour by default. You can tune this with `TEMP_FILE_MAX_AGE_MS`. Google Photos imports are downloaded at a print-friendly maximum size of 2400 px by default; set `GOOGLE_PHOTO_DOWNLOAD_SIZE` if you need a different maximum.
+
 For Google Photos on Vercel, add your deployed callback URL to the Google OAuth client:
 
 ```sh

@@ -3,7 +3,7 @@ import express from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,6 +40,8 @@ const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediai
 const SESSION_SECRET = process.env.SESSION_SECRET || GOOGLE_CLIENT_SECRET;
 const TOKEN_COOKIE = 'gphotos_token';
 const TOKEN_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
+const TEMP_FILE_MAX_AGE_MS = Number(process.env.TEMP_FILE_MAX_AGE_MS || 60 * 60 * 1000);
+const GOOGLE_PHOTO_DOWNLOAD_SIZE = Number(process.env.GOOGLE_PHOTO_DOWNLOAD_SIZE || 2400);
 const googlePhotos = new Map();
 const DPI = 300;
 const PAGE = {
@@ -159,6 +161,7 @@ app.post('/api/google-photos/session/:sessionId/import', async (req, res) => {
     return res.status(401).json({ error: 'Google Photos is not connected.' });
   }
   try {
+    await cleanupTempFiles();
     const items = await listGooglePickedItems(req.params.sessionId, token);
     const importedItems = await Promise.all(items.map((item) => importGooglePhoto(item, token)));
     await googlePickerFetch(`https://photospicker.googleapis.com/v1/sessions/${req.params.sessionId}`, token, {
@@ -179,6 +182,7 @@ app.post('/api/print', upload.array('photos', 30), async (req, res) => {
 });
 
 async function handlePrintRequest(req, res, { print }) {
+  await cleanupTempFiles();
   const uploadedFiles = req.files || [];
   const googlePhotoIds = parseJsonArray(req.body.googlePhotoIds);
   if (!uploadedFiles.length && !googlePhotoIds.length) {
@@ -408,6 +412,46 @@ function findPlacement(items, candidate, usableWidth, usableHeight, gap) {
 
 function cleanupUploads(files) {
   return Promise.all(files.map((file) => rm(file.path, { force: true })));
+}
+
+async function cleanupTempFiles() {
+  const cutoff = Date.now() - TEMP_FILE_MAX_AGE_MS;
+  await Promise.all([
+    cleanupOldFiles(UPLOAD_DIR, cutoff),
+    cleanupOldFiles(PRINT_DIR, cutoff),
+    cleanupOldFiles(GOOGLE_PHOTOS_DIR, cutoff),
+  ]);
+
+  for (const [id, photo] of googlePhotos) {
+    if (photo.createdAt < cutoff || !existsSync(photo.path)) {
+      googlePhotos.delete(id);
+    }
+  }
+}
+
+async function cleanupOldFiles(dir, cutoff) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isFile())
+      .map(async (entry) => {
+        const filePath = path.join(dir, entry.name);
+        try {
+          const fileStat = await stat(filePath);
+          if (fileStat.mtimeMs < cutoff) {
+            await rm(filePath, { force: true });
+          }
+        } catch {
+          // Another request may have already removed this temp file.
+        }
+      }),
+  );
 }
 
 function parseJsonArray(value) {
@@ -683,7 +727,7 @@ async function importGooglePhoto(item, token) {
   const extension = mediaFile.mimeType === 'image/png' ? 'png' : 'jpg';
   const filename = mediaFile.filename || `google-photo-${id}.${extension}`;
   const outputPath = path.join(GOOGLE_PHOTOS_DIR, `${id}.${extension}`);
-  const downloadUrl = `${mediaFile.baseUrl}=d`;
+  const downloadUrl = `${mediaFile.baseUrl}=w${GOOGLE_PHOTO_DOWNLOAD_SIZE}-h${GOOGLE_PHOTO_DOWNLOAD_SIZE}`;
   const response = await fetch(downloadUrl, {
     headers: { Authorization: `Bearer ${token.access_token}` },
   });
@@ -697,6 +741,7 @@ async function importGooglePhoto(item, token) {
     id,
     name: filename,
     path: outputPath,
+    createdAt: Date.now(),
     thumbnailUrl: `/google-photos/${path.basename(outputPath)}`,
   };
   googlePhotos.set(id, imported);
