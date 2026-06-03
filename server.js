@@ -41,7 +41,7 @@ const GOOGLE_PHOTOS_SCOPE = 'openid email https://www.googleapis.com/auth/photos
 const SESSION_SECRET = process.env.SESSION_SECRET || GOOGLE_CLIENT_SECRET;
 const TOKEN_COOKIE = 'gphotos_token';
 const TOKEN_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
-const TEMP_FILE_MAX_AGE_MS = Number(process.env.TEMP_FILE_MAX_AGE_MS || 60 * 60 * 1000);
+const TEMP_FILE_MAX_AGE_MS = Number(process.env.TEMP_FILE_MAX_AGE_MS || (IS_VERCEL ? 5 * 60 * 1000 : 60 * 60 * 1000));
 const GOOGLE_PHOTO_DOWNLOAD_SIZE = Number(process.env.GOOGLE_PHOTO_DOWNLOAD_SIZE || 2400);
 const googlePhotos = new Map();
 let googleToken;
@@ -204,7 +204,7 @@ async function handlePrintRequest(req, res, { print }) {
     const sizeKey = requestedSizes[localJobs.length + index] || DEFAULT_PRINT_SIZE;
     const size = PRINT_SIZES[sizeKey];
     return googlePhoto
-      ? { file: { path: googlePhoto.path }, sizeKey, size, source: 'google', name: googlePhoto.name }
+      ? { file: { path: googlePhoto.path }, sizeKey, size, source: 'google', name: googlePhoto.name, googleId: id }
       : { file: null, sizeKey, size };
   });
   const jobs = [...localJobs, ...googleJobs];
@@ -212,6 +212,7 @@ async function handlePrintRequest(req, res, { print }) {
   const invalidJob = jobs.find((job) => !job.file || !job.size);
   if (invalidJob) {
     await cleanupUploads(uploadedFiles);
+    await cleanupGooglePhotos(googleJobs);
     return res.status(400).json({ error: 'Please choose a valid print size for every photo.' });
   }
 
@@ -226,6 +227,12 @@ async function handlePrintRequest(req, res, { print }) {
       }
     }
 
+    const serializedPages = await Promise.all(pages.map(serializePage));
+    await cleanupGooglePhotos(googleJobs);
+    if (IS_VERCEL) {
+      await Promise.all(pages.map((page) => rm(page.outputPath, { force: true })));
+    }
+
     return res.json({
       ok: true,
       dryRun: PRINT_DRY_RUN,
@@ -233,7 +240,7 @@ async function handlePrintRequest(req, res, { print }) {
       serverPrintingEnabled: SERVER_PRINTING_ENABLED,
       pageCount: pages.length,
       imageCount: jobs.length,
-      pages: await Promise.all(pages.map(serializePage)),
+      pages: serializedPages,
       message: !print
         ? `Previewing ${jobs.length} photo${jobs.length === 1 ? '' : 's'} on ${pages.length} page${pages.length === 1 ? '' : 's'}.`
         : !SERVER_PRINTING_ENABLED
@@ -242,8 +249,20 @@ async function handlePrintRequest(req, res, { print }) {
     });
   } catch (error) {
     await cleanupUploads(uploadedFiles);
+    await cleanupGooglePhotos(googleJobs);
     return res.status(500).json({ error: error.message || 'Unable to print photo.' });
   }
+}
+
+async function cleanupGooglePhotos(googleJobs) {
+  await Promise.all(googleJobs.map(async (job) => {
+    if (job.googleId) {
+      googlePhotos.delete(job.googleId);
+    }
+    if (job.file?.path) {
+      await rm(job.file.path, { force: true });
+    }
+  }));
 }
 
 async function serializePage(page) {
