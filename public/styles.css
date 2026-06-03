@@ -226,6 +226,19 @@ form {
   font-size: 0.93rem;
 }
 
+.status-message {
+  min-height: 1.4em;
+  margin: 0;
+  color: #6e695f;
+  font-size: 0.93rem;
+  line-height: 1.4;
+}
+
+.status-message.is-error {
+  color: #9d2f2f;
+  font-weight: 800;
+}
+
 select,
 button {
   width: 100%;

@@ -43,9 +43,15 @@ let previewRequestId = 0;
 let selectedPreviewIndex = null;
 let currentPages = [];
 let serverPrintingEnabled = false;
+let hostedMode = false;
 let settings = readSettings();
 const PAGE_WIDTH = 2550;
 const PAGE_HEIGHT = 3300;
+const HOSTED_UPLOAD_TARGETS = [
+  { minCount: 10, maxEdge: 900, quality: 0.66 },
+  { minCount: 5, maxEdge: 1100, quality: 0.7 },
+  { minCount: 1, maxEdge: 1400, quality: 0.74 },
+];
 
 previewPicker.className = 'preview-picker';
 previewPicker.hidden = true;
@@ -64,6 +70,7 @@ fetch('/api/options')
     saveSettings();
     renderSettingsForm();
     serverPrintingEnabled = Boolean(options.serverPrintingEnabled);
+    hostedMode = Boolean(options.hosted);
     appMode.textContent = serverPrintingEnabled ? 'Local photo printer' : 'Hosted print layout';
     setStatus(
       serverPrintingEnabled
@@ -357,15 +364,19 @@ async function updatePreview() {
   previewAbortController = new AbortController();
   const requestId = ++previewRequestId;
   syncHiddenInputs();
-  showProgress('Updating preview...');
+  showProgress(hostedMode && localPhotos.length > 4 ? 'Preparing photos...' : 'Updating preview...');
 
   try {
     const response = await fetch('/api/preview', {
       method: 'POST',
-      body: buildPrintFormData(),
+      body: await buildPrintFormData((message) => {
+        if (requestId === previewRequestId) {
+          showProgress(message);
+        }
+      }),
       signal: previewAbortController.signal,
     });
-    const result = await response.json();
+    const result = await readJsonResponse(response);
 
     if (requestId !== previewRequestId) {
       return;
@@ -575,15 +586,108 @@ function removePhoto(index) {
   updatePreview();
 }
 
-function buildPrintFormData() {
+async function buildPrintFormData(onProgress) {
   syncHiddenInputs();
   const formData = new FormData();
-  for (const file of localPhotos) {
-    formData.append('photos', file);
+  const uploadTarget = getHostedUploadTarget(localPhotos.length);
+  for (const [index, file] of localPhotos.entries()) {
+    if (hostedMode && localPhotos.length > 4) {
+      onProgress?.(`Preparing photo ${index + 1} of ${localPhotos.length}...`);
+    }
+    formData.append('photos', await prepareUploadFile(file, uploadTarget));
+  }
+  if (hostedMode && localPhotos.length > 4) {
+    onProgress?.('Uploading prepared photos...');
   }
   formData.append('sizes', sizesInput.value);
   formData.append('googlePhotoIds', googlePhotoIdsInput.value);
   return formData;
+}
+
+function getHostedUploadTarget(photoCount) {
+  return HOSTED_UPLOAD_TARGETS.find((target) => photoCount >= target.minCount) || HOSTED_UPLOAD_TARGETS.at(-1);
+}
+
+async function prepareUploadFile(file, uploadTarget) {
+  if (!hostedMode || !file.type.startsWith('image/') || file.type === 'image/heic' || file.type === 'image/heif') {
+    return file;
+  }
+
+  try {
+    const image = await loadUploadImage(file);
+    const scale = Math.min(1, uploadTarget.maxEdge / Math.max(image.width, image.height));
+    if (scale >= 1 && file.size < 350_000) {
+      image.close?.();
+      return file;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    const context = canvas.getContext('2d');
+    context.drawImage(image.source, 0, 0, canvas.width, canvas.height);
+    image.close?.();
+
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob(resolve, 'image/jpeg', uploadTarget.quality);
+    });
+
+    if (!blob) {
+      return file;
+    }
+
+    return new File(
+      [blob],
+      `${file.name.replace(/\.[^.]+$/, '') || 'photo'}-hosted-preview.jpg`,
+      { type: 'image/jpeg', lastModified: file.lastModified },
+    );
+  } catch {
+    return file;
+  }
+}
+
+async function loadUploadImage(file) {
+  if ('createImageBitmap' in window) {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      close: () => bitmap.close?.(),
+    };
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    await new Promise((resolve, reject) => {
+      image.addEventListener('load', resolve, { once: true });
+      image.addEventListener('error', reject, { once: true });
+      image.src = objectUrl;
+    });
+    return {
+      source: image,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      close: () => URL.revokeObjectURL(objectUrl),
+    };
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+async function readJsonResponse(response) {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    if (response.status === 413) {
+      return { error: 'That photo batch is too large for hosted preview. Try fewer photos at a time, or use Google Photos import.' };
+    }
+    return { error: text || 'Preview failed.' };
+  }
 }
 
 function syncHiddenInputs() {
