@@ -212,7 +212,6 @@ async function handlePrintRequest(req, res, { print }) {
   const invalidJob = jobs.find((job) => !job.file || !job.size);
   if (invalidJob) {
     await cleanupUploads(uploadedFiles);
-    await cleanupGooglePhotos(googleJobs);
     return res.status(400).json({ error: 'Please choose a valid print size for every photo.' });
   }
 
@@ -228,7 +227,6 @@ async function handlePrintRequest(req, res, { print }) {
     }
 
     const serializedPages = await Promise.all(pages.map(serializePage));
-    await cleanupGooglePhotos(googleJobs);
     if (IS_VERCEL) {
       await Promise.all(pages.map((page) => rm(page.outputPath, { force: true })));
     }
@@ -249,20 +247,8 @@ async function handlePrintRequest(req, res, { print }) {
     });
   } catch (error) {
     await cleanupUploads(uploadedFiles);
-    await cleanupGooglePhotos(googleJobs);
     return res.status(500).json({ error: error.message || 'Unable to print photo.' });
   }
-}
-
-async function cleanupGooglePhotos(googleJobs) {
-  await Promise.all(googleJobs.map(async (job) => {
-    if (job.googleId) {
-      googlePhotos.delete(job.googleId);
-    }
-    if (job.file?.path) {
-      await rm(job.file.path, { force: true });
-    }
-  }));
 }
 
 async function serializePage(page) {
