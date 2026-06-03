@@ -103,6 +103,7 @@ app.get('/auth/google/callback', async (req, res) => {
     await saveGoogleToken(token);
     writeTokenCookie(res, req, token);
     console.log(`Google Photos connected with redirect URI: ${getGoogleRedirectUri(req)}`);
+    console.log('[gphotos] callback wrote cookie. https:', isHttpsRequest(req), 'host:', req.get('host'));
     return res.send('<script>window.opener?.postMessage({ type: "google-photos-connected" }, window.location.origin); window.close();</script><p>Google Photos connected. You can close this window.</p>');
   } catch (exchangeError) {
     console.error('Google authorization callback failed:', exchangeError);
@@ -445,6 +446,7 @@ async function cleanupOldFiles(dir, cutoff) {
   await Promise.all(
     entries
       .filter((entry) => entry.isFile())
+      .filter((entry) => path.join(dir, entry.name) !== GOOGLE_TOKEN_PATH)
       .map(async (entry) => {
         const filePath = path.join(dir, entry.name);
         try {
@@ -528,8 +530,17 @@ function parseCookies(header) {
 function readTokenCookie(req) {
   const cookies = parseCookies(req.headers.cookie);
   const raw = cookies[TOKEN_COOKIE];
-  if (!raw) return null;
-  return decryptToken(raw);
+  if (!raw) {
+    console.log('[gphotos] no cookie on request. cookie header keys:', Object.keys(cookies));
+    return null;
+  }
+  const decrypted = decryptToken(raw);
+  if (!decrypted) {
+    console.log('[gphotos] cookie present but decryption failed. value length:', raw.length);
+  } else {
+    console.log('[gphotos] cookie decrypted ok. has refresh:', Boolean(decrypted.refresh_token), 'expires in ms:', decrypted.expiresAt - Date.now());
+  }
+  return decrypted;
 }
 
 function readStoredGoogleToken(req) {
@@ -623,7 +634,11 @@ async function refreshAccessToken(refreshToken) {
 
 async function ensureFreshToken(req, res) {
   const stored = readStoredGoogleToken(req);
-  if (!stored) return null;
+  if (!stored) {
+    console.log('[gphotos] ensureFreshToken: no stored token (cookie or memory)');
+    return null;
+  }
+  console.log('[gphotos] ensureFreshToken: stored token found, alive:', isAccessTokenLive(stored), 'has refresh:', Boolean(stored.refresh_token));
   if (isAccessTokenLive(stored)) {
     if (!readTokenCookie(req)) {
       writeTokenCookie(res, req, stored);
