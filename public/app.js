@@ -729,10 +729,17 @@ function updateSelectedPhotoCount() {
 }
 
 async function waitForGooglePhotos(sessionId, pickerWindow) {
-  let closedAttempts = 0;
+  // Picker URL uses /autoclose, so the window closes as soon as the user clicks Done —
+  // but Google's backend may take many seconds to mark mediaItemsSet=true, especially
+  // for large selections and over higher-latency hosted environments. Keep polling for
+  // a generous window after close before treating it as a true cancellation.
+  const POST_CLOSE_GRACE_MS = 60_000;
+  let closedSince = 0;
 
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    const response = await fetch(`/api/google-photos/session/${sessionId}`);
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const response = await fetch(`/api/google-photos/session/${sessionId}?t=${Date.now()}`, {
+      cache: 'no-store',
+    });
     const session = await response.json();
     if (!response.ok) {
       throw new Error(session.error || 'Unable to check Google Photos.');
@@ -751,12 +758,13 @@ async function waitForGooglePhotos(sessionId, pickerWindow) {
     }
 
     if (pickerWindow?.closed) {
-      closedAttempts += 1;
-      if (closedAttempts >= 3) {
+      if (!closedSince) {
+        closedSince = Date.now();
+      } else if (Date.now() - closedSince >= POST_CLOSE_GRACE_MS) {
         throw new Error('Google Photos selection cancelled.');
       }
     } else {
-      closedAttempts = 0;
+      closedSince = 0;
     }
 
     const interval = parseDurationMs(session.pollingConfig?.pollInterval) || 2000;
