@@ -43,8 +43,6 @@ const TOKEN_COOKIE = 'gphotos_token';
 const TOKEN_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
 const TEMP_FILE_MAX_AGE_MS = Number(process.env.TEMP_FILE_MAX_AGE_MS || 60 * 60 * 1000);
 const GOOGLE_PHOTO_DOWNLOAD_SIZE = Number(process.env.GOOGLE_PHOTO_DOWNLOAD_SIZE || 2400);
-const HOSTED_PREVIEW_WIDTH = Number(process.env.HOSTED_PREVIEW_WIDTH || 850);
-const HOSTED_PREVIEW_QUALITY = Number(process.env.HOSTED_PREVIEW_QUALITY || 72);
 const googlePhotos = new Map();
 let googleToken;
 const DPI = 300;
@@ -253,7 +251,7 @@ async function handlePrintRequest(req, res, { print }) {
 async function serializePage(page) {
   return {
     previewUrl: `/prints/${path.basename(page.outputPath)}`,
-    previewDataUrl: IS_VERCEL ? await fileToHostedPreviewDataUrl(page.outputPath) : undefined,
+    previewDataUrl: IS_VERCEL ? await fileToDataUrl(page.outputPath) : undefined,
     imageCount: page.items.length,
     items: page.items.map((placement) => ({
       index: placement.item.index,
@@ -265,11 +263,8 @@ async function serializePage(page) {
   };
 }
 
-async function fileToHostedPreviewDataUrl(filePath) {
-  const image = await sharp(filePath)
-    .resize({ width: HOSTED_PREVIEW_WIDTH, withoutEnlargement: true })
-    .jpeg({ quality: HOSTED_PREVIEW_QUALITY })
-    .toBuffer();
+async function fileToDataUrl(filePath) {
+  const image = await readFile(filePath);
   return `data:image/jpeg;base64,${image.toString('base64')}`;
 }
 
