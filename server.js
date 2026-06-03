@@ -37,7 +37,7 @@ const GOOGLE_TOKEN_PATH = path.join(GOOGLE_PHOTOS_DIR, '.google-token.json');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || '';
-const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
+const GOOGLE_PHOTOS_SCOPE = 'openid email https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const SESSION_SECRET = process.env.SESSION_SECRET || GOOGLE_CLIENT_SECRET;
 const TOKEN_COOKIE = 'gphotos_token';
 const TOKEN_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
@@ -103,7 +103,6 @@ app.get('/auth/google/callback', async (req, res) => {
     await saveGoogleToken(token);
     writeTokenCookie(res, req, token);
     console.log(`Google Photos connected with redirect URI: ${getGoogleRedirectUri(req)}`);
-    console.log('[gphotos] callback wrote cookie. https:', isHttpsRequest(req), 'host:', req.get('host'));
     return res.send('<script>window.opener?.postMessage({ type: "google-photos-connected" }, window.location.origin); window.close();</script><p>Google Photos connected. You can close this window.</p>');
   } catch (exchangeError) {
     console.error('Google authorization callback failed:', exchangeError);
@@ -139,9 +138,7 @@ app.post('/api/google-photos/session', async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    const pickerUri = session.pickerUri?.endsWith('/autoclose')
-      ? session.pickerUri
-      : `${session.pickerUri}/autoclose`;
+    const pickerUri = buildPickerUri(session.pickerUri, token.email);
     return res.json({ sessionId: session.id, pickerUri });
   } catch (error) {
     return res.status(500).json({ error: error.message || 'Unable to start Google Photos picker.' });
@@ -530,17 +527,8 @@ function parseCookies(header) {
 function readTokenCookie(req) {
   const cookies = parseCookies(req.headers.cookie);
   const raw = cookies[TOKEN_COOKIE];
-  if (!raw) {
-    console.log('[gphotos] no cookie on request. cookie header keys:', Object.keys(cookies));
-    return null;
-  }
-  const decrypted = decryptToken(raw);
-  if (!decrypted) {
-    console.log('[gphotos] cookie present but decryption failed. value length:', raw.length);
-  } else {
-    console.log('[gphotos] cookie decrypted ok. has refresh:', Boolean(decrypted.refresh_token), 'expires in ms:', decrypted.expiresAt - Date.now());
-  }
-  return decrypted;
+  if (!raw) return null;
+  return decryptToken(raw);
 }
 
 function readStoredGoogleToken(req) {
@@ -608,14 +596,14 @@ async function clearSavedGoogleToken() {
   }
 }
 
-async function refreshAccessToken(refreshToken) {
+async function refreshAccessToken(stored) {
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
-      refresh_token: refreshToken,
+      refresh_token: stored.refresh_token,
       grant_type: 'refresh_token',
     }),
   });
@@ -627,18 +615,15 @@ async function refreshAccessToken(refreshToken) {
   }
   return {
     ...payload,
-    refresh_token: payload.refresh_token || refreshToken,
+    email: extractEmailFromIdToken(payload.id_token) || stored.email || null,
+    refresh_token: payload.refresh_token || stored.refresh_token,
     expiresAt: Date.now() + Number(payload.expires_in || 3600) * 1000,
   };
 }
 
 async function ensureFreshToken(req, res) {
   const stored = readStoredGoogleToken(req);
-  if (!stored) {
-    console.log('[gphotos] ensureFreshToken: no stored token (cookie or memory)');
-    return null;
-  }
-  console.log('[gphotos] ensureFreshToken: stored token found, alive:', isAccessTokenLive(stored), 'has refresh:', Boolean(stored.refresh_token));
+  if (!stored) return null;
   if (isAccessTokenLive(stored)) {
     if (!readTokenCookie(req)) {
       writeTokenCookie(res, req, stored);
@@ -651,7 +636,7 @@ async function ensureFreshToken(req, res) {
     return null;
   }
   try {
-    const refreshed = await refreshAccessToken(stored.refresh_token);
+    const refreshed = await refreshAccessToken(stored);
     await saveGoogleToken(refreshed);
     writeTokenCookie(res, req, refreshed);
     return refreshed;
@@ -678,7 +663,21 @@ function createGoogleAuthUrl(req) {
     access_type: 'offline',
     prompt: 'consent',
   });
+  const previousEmail = readStoredGoogleToken(req)?.email;
+  if (previousEmail) {
+    params.set('login_hint', previousEmail);
+  }
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+function buildPickerUri(rawUri, email) {
+  if (!rawUri) return rawUri;
+  let url = rawUri.endsWith('/autoclose') ? rawUri : `${rawUri}/autoclose`;
+  if (email) {
+    const separator = url.includes('?') ? '&' : '?';
+    url += `${separator}authuser=${encodeURIComponent(email)}`;
+  }
+  return url;
 }
 
 function getGoogleRedirectUri(req) {
@@ -731,8 +730,21 @@ async function exchangeGoogleCode(code, redirectUri) {
   }
   return {
     ...token,
+    email: extractEmailFromIdToken(token.id_token),
     expiresAt: Date.now() + Number(token.expires_in || 3600) * 1000,
   };
+}
+
+function extractEmailFromIdToken(idToken) {
+  if (!idToken) return null;
+  try {
+    const payloadB64 = idToken.split('.')[1];
+    if (!payloadB64) return null;
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    return payload.email || null;
+  } catch {
+    return null;
+  }
 }
 
 async function googlePickerFetch(url, token, options = {}) {
