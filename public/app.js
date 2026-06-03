@@ -9,12 +9,22 @@ const googleButton = document.querySelector('#google-button');
 const googleDisconnectButton = document.querySelector('#google-disconnect');
 const accountMenuButton = document.querySelector('#account-menu-button');
 const accountMenu = document.querySelector('#account-menu');
+const settingsMenuButton = document.querySelector('#settings-menu-button');
+const mainView = document.querySelector('#main-view');
+const settingsView = document.querySelector('#settings-view');
+const settingsBackButton = document.querySelector('#settings-back-button');
+const settingsForm = document.querySelector('#settings-form');
+const defaultPrintSizeSelect = document.querySelector('#default-print-size');
+const visiblePrintSizes = document.querySelector('#visible-print-sizes');
 const appMode = document.querySelector('#app-mode');
 const browserPrintButton = document.querySelector('#browser-print-button');
 const downloadButton = document.querySelector('#download-button');
 const progressOverlay = document.querySelector('#progress-overlay');
 const progressStatus = document.querySelector('#progress-status');
 const previewPicker = document.createElement('div');
+const SETTINGS_KEY = 'photoPrinterSettings';
+const DEFAULT_PRINT_SIZE = '3.5x5';
+const DEFAULT_VISIBLE_PRINT_SIZES = ['3.5x5', '4x6'];
 
 let printSizes = [
   { value: '2x3', label: '2 x 3' },
@@ -33,6 +43,7 @@ let previewRequestId = 0;
 let selectedPreviewIndex = null;
 let currentPages = [];
 let serverPrintingEnabled = false;
+let settings = readSettings();
 const PAGE_WIDTH = 2550;
 const PAGE_HEIGHT = 3300;
 
@@ -40,11 +51,18 @@ previewPicker.className = 'preview-picker';
 previewPicker.hidden = true;
 previewPicker.tabIndex = -1;
 document.body.append(previewPicker);
+accountMenuButton.hidden = false;
+settings = normalizeSettings(settings);
+saveSettings();
+renderSettingsForm();
 
 fetch('/api/options')
   .then((response) => response.json())
   .then((options) => {
     printSizes = options.sizes;
+    settings = normalizeSettings(settings);
+    saveSettings();
+    renderSettingsForm();
     serverPrintingEnabled = Boolean(options.serverPrintingEnabled);
     appMode.textContent = serverPrintingEnabled ? 'Local photo printer' : 'Hosted print layout';
     setStatus(
@@ -73,7 +91,7 @@ photoInput.addEventListener('change', () => {
   localPhotos = [...localPhotos, ...files];
   selectedSizes = [
     ...selectedSizes.slice(0, previousLocalCount),
-    ...files.map(() => '4x6'),
+    ...files.map(() => settings.defaultPrintSize),
     ...selectedSizes.slice(previousLocalCount),
   ];
   photoInput.value = '';
@@ -129,7 +147,7 @@ googleDisconnectButton.addEventListener('click', async () => {
       throw new Error('Unable to sign out of Google Photos.');
     }
     googlePhotos = [];
-    selectedSizes = getSelectedPhotos().map((_, index) => selectedSizes[index] || '4x6');
+    selectedSizes = getSelectedPhotos().map((_, index) => selectedSizes[index] || settings.defaultPrintSize);
     syncHiddenInputs();
     updateSelectedPhotoCount();
     setGoogleConnectedUi(false);
@@ -143,17 +161,55 @@ googleDisconnectButton.addEventListener('click', async () => {
 });
 
 function setGoogleConnectedUi(connected) {
-  accountMenuButton.hidden = !connected;
-  if (!connected) {
-    closeAccountMenu();
-  }
-
+  accountMenuButton.hidden = false;
+  googleDisconnectButton.hidden = !connected;
 }
 
 accountMenuButton.addEventListener('click', () => {
   const expanded = accountMenuButton.getAttribute('aria-expanded') === 'true';
   accountMenuButton.setAttribute('aria-expanded', String(!expanded));
   accountMenu.hidden = expanded;
+});
+
+settingsMenuButton.addEventListener('click', () => {
+  closeAccountMenu();
+  showSettingsView();
+});
+
+settingsBackButton.addEventListener('click', () => {
+  showMainView();
+});
+
+settingsForm.addEventListener('change', (event) => {
+  if (event.target === defaultPrintSizeSelect) {
+    settings.defaultPrintSize = defaultPrintSizeSelect.value;
+    if (!settings.visiblePrintSizes.includes(settings.defaultPrintSize)) {
+      settings.visiblePrintSizes = [...settings.visiblePrintSizes, settings.defaultPrintSize];
+    }
+    saveSettings();
+    renderSettingsForm();
+    return;
+  }
+
+  if (!(event.target instanceof HTMLInputElement) || event.target.name !== 'visiblePrintSizes') {
+    return;
+  }
+
+  const checkedValues = [...visiblePrintSizes.querySelectorAll('input[name="visiblePrintSizes"]:checked')]
+    .map((input) => input.value);
+  settings.visiblePrintSizes = checkedValues.length ? checkedValues : [settings.defaultPrintSize];
+
+  if (!settings.visiblePrintSizes.includes(settings.defaultPrintSize)) {
+    settings.defaultPrintSize = settings.visiblePrintSizes[0];
+  }
+
+  saveSettings();
+  normalizeSelectedSizes();
+  syncHiddenInputs();
+  renderSettingsForm();
+  if (getSelectedPhotos().length) {
+    updatePreview();
+  }
 });
 
 browserPrintButton.addEventListener('click', () => {
@@ -261,6 +317,18 @@ document.addEventListener('keydown', (event) => {
 function closeAccountMenu() {
   accountMenu.hidden = true;
   accountMenuButton.setAttribute('aria-expanded', 'false');
+}
+
+function showSettingsView() {
+  renderSettingsForm();
+  mainView.hidden = true;
+  settingsView.hidden = false;
+  settingsBackButton.focus();
+}
+
+function showMainView() {
+  settingsView.hidden = true;
+  mainView.hidden = false;
 }
 
 function hidePreviewPicker() {
@@ -428,7 +496,7 @@ function showPreviewPicker(index, anchor) {
   labelText.textContent = 'Size';
   select.setAttribute('aria-label', `Preview size for photo ${index + 1}`);
 
-  for (const size of printSizes) {
+  for (const size of getVisiblePrintSizes()) {
     const option = document.createElement('option');
     option.value = size.value;
     option.textContent = size.label;
@@ -479,7 +547,7 @@ function getSelectedPhotos() {
 
 function addGooglePhotos(items) {
   googlePhotos = [...googlePhotos, ...items.map((item) => ({ ...item, source: 'google' }))];
-  selectedSizes = getSelectedPhotos().map((_, index) => selectedSizes[index] || '4x6');
+  selectedSizes = getSelectedPhotos().map((_, index) => selectedSizes[index] || settings.defaultPrintSize);
   syncHiddenInputs();
   updateSelectedPhotoCount();
   setGoogleConnectedUi(true);
@@ -521,6 +589,82 @@ function buildPrintFormData() {
 function syncHiddenInputs() {
   sizesInput.value = JSON.stringify(selectedSizes);
   googlePhotoIdsInput.value = JSON.stringify(googlePhotos.map((photo) => photo.id));
+}
+
+function readSettings() {
+  try {
+    const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    return {
+      defaultPrintSize: savedSettings.defaultPrintSize || DEFAULT_PRINT_SIZE,
+      visiblePrintSizes: Array.isArray(savedSettings.visiblePrintSizes)
+        ? savedSettings.visiblePrintSizes
+        : DEFAULT_VISIBLE_PRINT_SIZES,
+    };
+  } catch {
+    return {
+      defaultPrintSize: DEFAULT_PRINT_SIZE,
+      visiblePrintSizes: DEFAULT_VISIBLE_PRINT_SIZES,
+    };
+  }
+}
+
+function normalizeSettings(candidate) {
+  const availableValues = new Set(printSizes.map((size) => size.value));
+  const visiblePrintSizes = candidate.visiblePrintSizes.filter((value) => availableValues.has(value));
+  const defaultPrintSize = availableValues.has(candidate.defaultPrintSize)
+    ? candidate.defaultPrintSize
+    : DEFAULT_PRINT_SIZE;
+  const normalizedVisible = visiblePrintSizes.length
+    ? visiblePrintSizes
+    : DEFAULT_VISIBLE_PRINT_SIZES.filter((value) => availableValues.has(value));
+
+  if (!normalizedVisible.includes(defaultPrintSize)) {
+    normalizedVisible.unshift(defaultPrintSize);
+  }
+
+  return {
+    defaultPrintSize,
+    visiblePrintSizes: [...new Set(normalizedVisible)],
+  };
+}
+
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function getVisiblePrintSizes() {
+  const visibleValues = new Set(settings.visiblePrintSizes);
+  return printSizes.filter((size) => visibleValues.has(size.value));
+}
+
+function normalizeSelectedSizes() {
+  const visibleValues = new Set(settings.visiblePrintSizes);
+  selectedSizes = selectedSizes.map((size) => (visibleValues.has(size) ? size : settings.defaultPrintSize));
+}
+
+function renderSettingsForm() {
+  defaultPrintSizeSelect.replaceChildren(...printSizes.map((size) => {
+    const option = document.createElement('option');
+    option.value = size.value;
+    option.textContent = size.label;
+    option.selected = size.value === settings.defaultPrintSize;
+    return option;
+  }));
+
+  const visibleValues = new Set(settings.visiblePrintSizes);
+  visiblePrintSizes.replaceChildren(...printSizes.map((size) => {
+    const label = document.createElement('label');
+    const checkbox = document.createElement('input');
+    const text = document.createElement('span');
+    label.className = 'settings-check';
+    checkbox.type = 'checkbox';
+    checkbox.name = 'visiblePrintSizes';
+    checkbox.value = size.value;
+    checkbox.checked = visibleValues.has(size.value);
+    text.textContent = size.label;
+    label.append(checkbox, text);
+    return label;
+  }));
 }
 
 function updateSelectedPhotoCount() {

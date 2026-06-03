@@ -63,6 +63,7 @@ const PRINT_SIZES = {
   '4x6': { label: '4 x 6', widthIn: 4, heightIn: 6 },
   '5x7': { label: '5 x 7', widthIn: 5, heightIn: 7 },
 };
+const DEFAULT_PRINT_SIZE = '3.5x5';
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/prints', express.static(PRINT_DIR));
@@ -196,13 +197,13 @@ async function handlePrintRequest(req, res, { print }) {
   const requestedSizes = parseJsonArray(req.body.sizes);
 
   const localJobs = uploadedFiles.map((file, index) => {
-    const sizeKey = requestedSizes[index] || '4x6';
+    const sizeKey = requestedSizes[index] || DEFAULT_PRINT_SIZE;
     const size = PRINT_SIZES[sizeKey];
     return { file, sizeKey, size };
   });
   const googleJobs = googlePhotoIds.map((id, index) => {
     const googlePhoto = googlePhotos.get(id);
-    const sizeKey = requestedSizes[localJobs.length + index] || '4x6';
+    const sizeKey = requestedSizes[localJobs.length + index] || DEFAULT_PRINT_SIZE;
     const size = PRINT_SIZES[sizeKey];
     return googlePhoto
       ? { file: { path: googlePhoto.path }, sizeKey, size, source: 'google', name: googlePhoto.name }

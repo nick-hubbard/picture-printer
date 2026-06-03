@@ -26,6 +26,9 @@
           </svg>
         </button>
         <div id="account-menu" class="account-menu-popover" role="menu" hidden>
+          <button id="settings-menu-button" class="menu-action" type="button" role="menuitem">
+            Settings
+          </button>
           <button id="google-disconnect" class="menu-action" type="button" role="menuitem">
             Sign out
           </button>
@@ -33,7 +36,7 @@
       </div>
     </header>
 
-    <main class="shell">
+    <main id="main-view" class="shell">
       <section class="panel" aria-labelledby="title">
         <div>
           <p id="app-mode" class="eyebrow">Photo print layout</p>
@@ -61,6 +64,30 @@
       <section class="preview" aria-label="Print preview">
         <div id="preview-pages" class="preview-pages"></div>
         <p id="preview-empty">Choose photos to preview the print pages.</p>
+      </section>
+    </main>
+
+    <main id="settings-view" class="settings-shell" hidden>
+      <section class="settings-panel" aria-labelledby="settings-title">
+        <div class="settings-header">
+          <div>
+            <p class="eyebrow">Preferences</p>
+            <h1 id="settings-title">Settings</h1>
+          </div>
+          <button id="settings-back-button" class="secondary settings-back-button" type="button">Back</button>
+        </div>
+
+        <form id="settings-form" class="settings-form">
+          <label class="settings-field" for="default-print-size">
+            <span>Default print size</span>
+            <select id="default-print-size" name="defaultPrintSize"></select>
+          </label>
+
+          <fieldset class="settings-fieldset">
+            <legend>Print sizes shown in menu</legend>
+            <div id="visible-print-sizes" class="settings-checks"></div>
+          </fieldset>
+        </form>
       </section>
     </main>
 
