@@ -73,6 +73,7 @@ input {
   min-height: var(--top-nav-height);
   align-items: center;
   justify-content: flex-end;
+  gap: 12px;
   padding: 10px 32px;
   border-bottom: 1px solid #d8d3ca;
   background: rgb(255 253 249 / 92%);
@@ -81,6 +82,12 @@ input {
 
 .account-menu {
   position: relative;
+}
+
+.header-print-button {
+  width: auto;
+  min-height: 42px;
+  padding: 0 18px;
 }
 
 .icon-button {
@@ -182,17 +189,18 @@ h1 {
 
 form {
   display: grid;
-  gap: 18px;
+  gap: 10px;
 }
 
 .drop-zone {
   display: grid;
-  gap: 8px;
-  min-height: 148px;
-  align-content: center;
-  padding: 22px;
-  border: 2px dashed #b9b0a2;
-  background: #faf8f4;
+  width: 100%;
+  min-height: 48px;
+  place-items: center;
+  padding: 0 16px;
+  border: 1px solid #202124;
+  background: #ffffff;
+  color: #202124;
   cursor: pointer;
 }
 
@@ -204,7 +212,7 @@ form {
 }
 
 .drop-title {
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 800;
 }
 
@@ -248,13 +256,6 @@ button:disabled {
 .google-row {
   display: grid;
   gap: 10px;
-}
-
-.status {
-  min-height: 44px;
-  margin: auto 0 0;
-  color: #3f4f43;
-  line-height: 1.45;
 }
 
 .progress-overlay {
@@ -313,13 +314,6 @@ button:disabled {
   min-height: calc(100vh - var(--top-nav-height) - 56px);
   padding: 24px;
   overflow: auto;
-}
-
-.preview-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 180px);
-  gap: 10px;
-  margin-bottom: 18px;
 }
 
 .preview-pages {
@@ -475,9 +469,5 @@ button:disabled {
 
   .preview {
     min-height: 300px;
-  }
-
-  .preview-actions {
-    grid-template-columns: 1fr;
   }
 }

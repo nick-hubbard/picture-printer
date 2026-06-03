@@ -8,6 +8,7 @@
   </head>
   <body>
     <header class="top-nav" aria-label="Account">
+      <button id="browser-print-button" class="header-print-button" type="button" hidden>Print</button>
       <div class="account-menu">
         <button
           id="account-menu-button"
@@ -39,33 +40,25 @@
           <h1 id="title">Prepare photos</h1>
         </div>
 
-        <form id="print-form">
-          <label class="drop-zone" for="photos">
-            <input id="photos" name="photos" type="file" accept="image/*" multiple />
-            <span class="drop-title">Choose photos</span>
-            <span id="file-name" class="drop-meta">JPG, PNG, HEIC, or WebP</span>
-          </label>
-
-          <input id="sizes" name="sizes" type="hidden" value="[]" />
-          <input id="google-photo-ids" name="googlePhotoIds" type="hidden" value="[]" />
-
-          <button id="submit-button" type="submit">Prepare pages</button>
-        </form>
-
         <div class="google-row">
           <button id="google-button" class="secondary" type="button" disabled>
             Google Photos
           </button>
-          <span id="google-status">OAuth setup required</span>
         </div>
 
-        <p id="status" class="status" role="status"></p>
+        <form id="print-form">
+          <label class="drop-zone" for="photos" aria-label="Upload Photos">
+            <input id="photos" name="photos" type="file" accept="image/*" multiple />
+            <span class="drop-title">Upload Photos</span>
+          </label>
+          <span id="file-name" class="drop-meta">JPG, PNG, HEIC, or WebP</span>
+
+          <input id="sizes" name="sizes" type="hidden" value="[]" />
+          <input id="google-photo-ids" name="googlePhotoIds" type="hidden" value="[]" />
+        </form>
       </section>
 
       <section class="preview" aria-label="Print preview">
-        <div class="preview-actions" aria-label="Prepared page actions">
-          <button id="browser-print-button" class="secondary" type="button" disabled>Print</button>
-        </div>
         <div id="preview-pages" class="preview-pages"></div>
         <p id="preview-empty">Choose photos to preview the print pages.</p>
       </section>

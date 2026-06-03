@@ -1,4 +1,3 @@
-const form = document.querySelector('#print-form');
 const photoInput = document.querySelector('#photos');
 const fileName = document.querySelector('#file-name');
 const sizesInput = document.querySelector('#sizes');
@@ -8,11 +7,9 @@ const previewPages = document.querySelector('#preview-pages');
 const previewEmpty = document.querySelector('#preview-empty');
 const googleButton = document.querySelector('#google-button');
 const googleDisconnectButton = document.querySelector('#google-disconnect');
-const googleStatus = document.querySelector('#google-status');
 const accountMenuButton = document.querySelector('#account-menu-button');
 const accountMenu = document.querySelector('#account-menu');
 const appMode = document.querySelector('#app-mode');
-const submitButton = document.querySelector('#submit-button');
 const browserPrintButton = document.querySelector('#browser-print-button');
 const downloadButton = document.querySelector('#download-button');
 const progressOverlay = document.querySelector('#progress-overlay');
@@ -50,10 +47,11 @@ fetch('/api/options')
     printSizes = options.sizes;
     serverPrintingEnabled = Boolean(options.serverPrintingEnabled);
     appMode.textContent = serverPrintingEnabled ? 'Local photo printer' : 'Hosted print layout';
-    submitButton.textContent = serverPrintingEnabled ? 'Print photos' : 'Prepare pages';
-    statusText.textContent = serverPrintingEnabled
-      ? `Ready to print to ${options.printerName}.`
-      : 'Prepare printable pages, then print or download them from your browser.';
+    setStatus(
+      serverPrintingEnabled
+        ? `Ready to print to ${options.printerName}.`
+        : 'Choose photos to preview printable pages.',
+    );
 
     if (options.googlePhotosEnabled) {
       googleButton.disabled = false;
@@ -61,7 +59,7 @@ fetch('/api/options')
     }
   })
   .catch(() => {
-    statusText.textContent = 'Unable to read printer settings.';
+    setStatus('Unable to read printer settings.', true);
   });
 
 photoInput.addEventListener('change', () => {
@@ -84,37 +82,9 @@ photoInput.addEventListener('change', () => {
   updatePreview();
 });
 
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  submitButton.disabled = true;
-  showProgress(serverPrintingEnabled ? 'Printing pages...' : 'Preparing pages...');
-
-  try {
-    syncHiddenInputs();
-    const response = await fetch('/api/print', {
-      method: 'POST',
-      body: buildPrintFormData(),
-    });
-    const result = await response.json();
-
-    if (!response.ok) {
-      throw new Error(result.error || 'Print failed.');
-    }
-
-    renderPreviewPages(result.pages);
-    statusText.textContent = result.message;
-  } catch (error) {
-    statusText.textContent = error.message;
-  } finally {
-    hideProgress();
-    submitButton.disabled = false;
-  }
-});
-
 googleButton.addEventListener('click', async () => {
   googleButton.disabled = true;
-  googleStatus.textContent = 'Opening picker...';
-  statusText.textContent = 'Connecting to Google Photos...';
+  setStatus('Connecting to Google Photos...');
 
   try {
     const response = await fetch('/api/google-photos/session', { method: 'POST' });
@@ -122,8 +92,7 @@ googleButton.addEventListener('click', async () => {
 
     if (response.status === 401 && result.authUrl) {
       window.open(result.authUrl, 'google-auth', 'width=520,height=680');
-      googleStatus.textContent = 'Finish sign in';
-      statusText.textContent = 'After signing in, click Google Photos again.';
+      setStatus('After signing in, click Google Photos again.');
       return;
     }
 
@@ -136,8 +105,7 @@ googleButton.addEventListener('click', async () => {
     if (!pickerWindow) {
       throw new Error('Allow popups to choose Google Photos.');
     }
-    googleStatus.textContent = 'Choose photos';
-    statusText.textContent = 'Choose photos in Google Photos, then click Done.';
+    setStatus('Choose photos in Google Photos, then click Done.');
     showProgress('Waiting for Google Photos...');
     const importedItems = await waitForGooglePhotos(result.sessionId, pickerWindow);
     addGooglePhotos(importedItems);
@@ -146,7 +114,7 @@ googleButton.addEventListener('click', async () => {
     if (error.message === 'Google Photos selection cancelled.') {
       setGoogleConnectedUi(true);
     }
-    statusText.textContent = error.message;
+    setStatus(error.message, true);
   } finally {
     googleButton.disabled = false;
   }
@@ -165,10 +133,10 @@ googleDisconnectButton.addEventListener('click', async () => {
     syncHiddenInputs();
     updateSelectedPhotoCount();
     setGoogleConnectedUi(false);
-    statusText.textContent = 'Signed out of Google Photos.';
+    setStatus('Signed out of Google Photos.');
     updatePreview();
   } catch (error) {
-    statusText.textContent = error.message;
+    setStatus(error.message, true);
   } finally {
     googleDisconnectButton.disabled = false;
   }
@@ -179,7 +147,7 @@ function setGoogleConnectedUi(connected) {
   if (!connected) {
     closeAccountMenu();
   }
-  googleStatus.textContent = connected ? 'Connected' : 'Ready to connect';
+
 }
 
 accountMenuButton.addEventListener('click', () => {
@@ -195,7 +163,7 @@ browserPrintButton.addEventListener('click', () => {
 
   const printWindow = window.open('', 'photo-print-pages');
   if (!printWindow) {
-    statusText.textContent = 'Allow popups to print the prepared pages.';
+    setStatus('Allow popups to print the prepared pages.', true);
     return;
   }
 
@@ -238,8 +206,8 @@ window.addEventListener('message', (event) => {
     return;
   }
 
-  googleStatus.textContent = 'Connected';
-  statusText.textContent = 'Google Photos connected. Opening picker...';
+
+  setStatus('Google Photos connected. Opening picker...');
   googleButton.click();
 });
 
@@ -308,9 +276,12 @@ async function updatePreview() {
     updatePreparedPageActions();
     previewPages.replaceChildren();
     previewEmpty.hidden = false;
-    statusText.textContent = serverPrintingEnabled
-      ? 'Choose photos to preview the print pages.'
-      : 'Prepare printable pages, then print or download them from your browser.';
+    setStatus(
+      serverPrintingEnabled
+        ? 'Choose photos to preview the print pages.'
+        : 'Choose photos to preview printable pages.',
+    );
+
     return;
   }
 
@@ -337,12 +308,14 @@ async function updatePreview() {
     }
 
     renderPreviewPages(result.pages);
-    statusText.textContent = result.message;
+    setStatus(result.message);
+
   } catch (error) {
     if (error.name === 'AbortError') {
       return;
     }
-    statusText.textContent = error.message;
+    setStatus(error.message, true);
+
   } finally {
     if (requestId === previewRequestId) {
       hideProgress();
@@ -360,6 +333,14 @@ function hideProgress() {
   progressOverlay.hidden = true;
   progressStatus.textContent = '';
   document.body.removeAttribute('aria-busy');
+}
+
+function setStatus(message, isError = false) {
+  if (!statusText) {
+    return;
+  }
+  statusText.textContent = message || '';
+  statusText.classList.toggle('is-error', isError);
 }
 
 function renderPreviewPages(pages) {
@@ -393,6 +374,7 @@ function getPageImageUrl(page, { cacheBust = false } = {}) {
 function updatePreparedPageActions() {
   const hasPages = currentPages.length > 0;
   browserPrintButton.disabled = !hasPages;
+  browserPrintButton.hidden = !hasPages;
   if (downloadButton) {
     downloadButton.disabled = !hasPages;
   }
@@ -549,11 +531,9 @@ function updateSelectedPhotoCount() {
 }
 
 async function waitForGooglePhotos(sessionId, pickerWindow) {
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    if (pickerWindow?.closed) {
-      throw new Error('Google Photos selection cancelled.');
-    }
+  let closedAttempts = 0;
 
+  for (let attempt = 0; attempt < 90; attempt += 1) {
     const response = await fetch(`/api/google-photos/session/${sessionId}`);
     const session = await response.json();
     if (!response.ok) {
@@ -570,6 +550,15 @@ async function waitForGooglePhotos(sessionId, pickerWindow) {
         throw new Error(imported.error || 'Unable to import Google Photos.');
       }
       return imported.items;
+    }
+
+    if (pickerWindow?.closed) {
+      closedAttempts += 1;
+      if (closedAttempts >= 3) {
+        throw new Error('Google Photos selection cancelled.');
+      }
+    } else {
+      closedAttempts = 0;
     }
 
     const interval = parseDurationMs(session.pollingConfig?.pollInterval) || 2000;
