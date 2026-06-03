@@ -21,12 +21,19 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const PRINT_DIR = path.join(DATA_DIR, 'prints');
 const GOOGLE_PHOTOS_DIR = path.join(DATA_DIR, 'google-photos');
 const upload = multer({
-  dest: UPLOAD_DIR,
+  ...(IS_VERCEL ? { storage: multer.memoryStorage() } : { dest: UPLOAD_DIR }),
   limits: { fileSize: 25 * 1024 * 1024, files: 30 },
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
   },
 });
+
+function sharpInput(file) {
+  if (!file) return null;
+  if (Buffer.isBuffer(file)) return file;
+  if (file.buffer) return file.buffer;
+  return file.path;
+}
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -66,8 +73,21 @@ const PRINT_SIZES = {
 const DEFAULT_PRINT_SIZE = '3.5x5';
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/prints', express.static(PRINT_DIR));
-app.use('/google-photos', express.static(GOOGLE_PHOTOS_DIR));
+if (!IS_VERCEL) {
+  app.use('/prints', express.static(PRINT_DIR));
+  app.use('/google-photos', express.static(GOOGLE_PHOTOS_DIR));
+} else {
+  app.get('/google-photos/:filename', (req, res) => {
+    for (const photo of googlePhotos.values()) {
+      if (photo.thumbnailFilename === req.params.filename) {
+        res.set('Content-Type', photo.mimeType || 'image/jpeg');
+        res.set('Cache-Control', 'private, max-age=300');
+        return res.send(photo.buffer);
+      }
+    }
+    return res.status(404).end();
+  });
+}
 
 app.get('/api/options', (req, res) => {
   res.json({
@@ -203,9 +223,11 @@ async function handlePrintRequest(req, res, { print }) {
     const googlePhoto = googlePhotos.get(id);
     const sizeKey = requestedSizes[localJobs.length + index] || DEFAULT_PRINT_SIZE;
     const size = PRINT_SIZES[sizeKey];
-    return googlePhoto
-      ? { file: { path: googlePhoto.path }, sizeKey, size, source: 'google', name: googlePhoto.name, googleId: id }
-      : { file: null, sizeKey, size };
+    if (!googlePhoto) {
+      return { file: null, sizeKey, size };
+    }
+    const file = googlePhoto.buffer ? { buffer: googlePhoto.buffer } : { path: googlePhoto.path };
+    return { file, sizeKey, size, source: 'google', name: googlePhoto.name, googleId: id };
   });
   const jobs = [...localJobs, ...googleJobs];
 
@@ -216,7 +238,9 @@ async function handlePrintRequest(req, res, { print }) {
   }
 
   try {
-    await mkdir(PRINT_DIR, { recursive: true });
+    if (!IS_VERCEL) {
+      await mkdir(PRINT_DIR, { recursive: true });
+    }
     const pages = await composePages(jobs);
     await cleanupUploads(uploadedFiles);
 
@@ -227,9 +251,6 @@ async function handlePrintRequest(req, res, { print }) {
     }
 
     const serializedPages = await Promise.all(pages.map(serializePage));
-    if (IS_VERCEL) {
-      await Promise.all(pages.map((page) => rm(page.outputPath, { force: true })));
-    }
 
     return res.json({
       ok: true,
@@ -253,8 +274,10 @@ async function handlePrintRequest(req, res, { print }) {
 
 async function serializePage(page) {
   return {
-    previewUrl: `/prints/${path.basename(page.outputPath)}`,
-    previewDataUrl: IS_VERCEL ? await fileToDataUrl(page.outputPath) : undefined,
+    previewUrl: page.outputPath ? `/prints/${path.basename(page.outputPath)}` : undefined,
+    previewDataUrl: page.buffer
+      ? `data:image/jpeg;base64,${page.buffer.toString('base64')}`
+      : undefined,
     imageCount: page.items.length,
     items: page.items.map((placement) => ({
       index: placement.item.index,
@@ -264,11 +287,6 @@ async function serializePage(page) {
       height: placement.height,
     })),
   };
-}
-
-async function fileToDataUrl(filePath) {
-  const image = await readFile(filePath);
-  return `data:image/jpeg;base64,${image.toString('base64')}`;
 }
 
 async function composePages(jobs) {
@@ -304,10 +322,9 @@ async function composePages(jobs) {
         left: margin + placement.x,
         top: margin + placement.y,
       }));
-    const outputPath = path.join(PRINT_DIR, `${crypto.randomUUID()}-page-${pageIndex + 1}.jpg`);
     const composites = await Promise.all(
       pageItems.map(async (placement) => {
-        const image = await sharp(placement.item.file.path)
+        const image = await sharp(sharpInput(placement.item.file))
           .rotate()
           .resize(placement.width, placement.height, { fit: 'contain', background: '#ffffff' })
           .jpeg({ quality: 95 })
@@ -321,7 +338,7 @@ async function composePages(jobs) {
       }),
     );
 
-    await sharp({
+    const pageImage = sharp({
       create: {
         width: pageWidth,
         height: pageHeight,
@@ -331,17 +348,23 @@ async function composePages(jobs) {
     })
       .composite(composites)
       .jpeg({ quality: 95 })
-      .withMetadata({ density: DPI })
-      .toFile(outputPath);
+      .withMetadata({ density: DPI });
 
-    outputPages.push({ outputPath, items: pageItems });
+    if (IS_VERCEL) {
+      const buffer = await pageImage.toBuffer();
+      outputPages.push({ buffer, items: pageItems });
+    } else {
+      const outputPath = path.join(PRINT_DIR, `${crypto.randomUUID()}-page-${pageIndex + 1}.jpg`);
+      await pageImage.toFile(outputPath);
+      outputPages.push({ outputPath, items: pageItems });
+    }
   }
 
   return outputPages;
 }
 
 async function preparePrintItem(job, index) {
-  const metadata = await sharp(job.file.path).metadata();
+  const metadata = await sharp(sharpInput(job.file)).metadata();
   const width = metadata.width || 0;
   const height = metadata.height || 0;
   const swapsAxes = metadata.orientation >= 5 && metadata.orientation <= 8;
@@ -419,19 +442,29 @@ function findPlacement(items, candidate, usableWidth, usableHeight, gap) {
 }
 
 function cleanupUploads(files) {
-  return Promise.all(files.map((file) => rm(file.path, { force: true })));
+  return Promise.all(
+    files
+      .filter((file) => file?.path)
+      .map((file) => rm(file.path, { force: true })),
+  );
 }
 
 async function cleanupTempFiles() {
   const cutoff = Date.now() - TEMP_FILE_MAX_AGE_MS;
-  await Promise.all([
-    cleanupOldFiles(UPLOAD_DIR, cutoff),
-    cleanupOldFiles(PRINT_DIR, cutoff),
-    cleanupOldFiles(GOOGLE_PHOTOS_DIR, cutoff),
-  ]);
+  if (!IS_VERCEL) {
+    await Promise.all([
+      cleanupOldFiles(UPLOAD_DIR, cutoff),
+      cleanupOldFiles(PRINT_DIR, cutoff),
+      cleanupOldFiles(GOOGLE_PHOTOS_DIR, cutoff),
+    ]);
+  }
 
   for (const [id, photo] of googlePhotos) {
-    if (photo.createdAt < cutoff || !existsSync(photo.path)) {
+    if (photo.createdAt < cutoff) {
+      googlePhotos.delete(id);
+      continue;
+    }
+    if (photo.path && !existsSync(photo.path)) {
       googlePhotos.delete(id);
     }
   }
@@ -578,6 +611,10 @@ function clearTokenCookie(res, req) {
 }
 
 async function loadGoogleToken() {
+  if (IS_VERCEL) {
+    googleToken = null;
+    return;
+  }
   try {
     const saved = JSON.parse(await readFile(GOOGLE_TOKEN_PATH, 'utf8'));
     googleToken = saved;
@@ -588,12 +625,14 @@ async function loadGoogleToken() {
 
 async function saveGoogleToken(token) {
   googleToken = token;
+  if (IS_VERCEL) return;
   await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
   await writeFile(GOOGLE_TOKEN_PATH, JSON.stringify(token, null, 2));
 }
 
 async function clearSavedGoogleToken() {
   googleToken = null;
+  if (IS_VERCEL) return;
   try {
     await rm(GOOGLE_TOKEN_PATH, { force: true });
   } catch {
@@ -794,12 +833,11 @@ async function listGooglePickedItems(sessionId, token) {
 }
 
 async function importGooglePhoto(item, token) {
-  await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
   const id = crypto.randomUUID();
   const mediaFile = item.mediaFile;
   const extension = mediaFile.mimeType === 'image/png' ? 'png' : 'jpg';
   const filename = mediaFile.filename || `google-photo-${id}.${extension}`;
-  const outputPath = path.join(GOOGLE_PHOTOS_DIR, `${id}.${extension}`);
+  const thumbnailFilename = `${id}.${extension}`;
   const downloadUrl = `${mediaFile.baseUrl}=w${GOOGLE_PHOTO_DOWNLOAD_SIZE}-h${GOOGLE_PHOTO_DOWNLOAD_SIZE}`;
   const response = await fetch(downloadUrl, {
     headers: { Authorization: `Bearer ${token.access_token}` },
@@ -809,14 +847,24 @@ async function importGooglePhoto(item, token) {
     throw new Error(`Unable to download ${filename} from Google Photos.`);
   }
 
-  await writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
+  const data = Buffer.from(await response.arrayBuffer());
   const imported = {
     id,
     name: filename,
-    path: outputPath,
     createdAt: Date.now(),
-    thumbnailUrl: `/google-photos/${path.basename(outputPath)}`,
+    thumbnailFilename,
+    thumbnailUrl: `/google-photos/${thumbnailFilename}`,
+    mimeType: mediaFile.mimeType || (extension === 'png' ? 'image/png' : 'image/jpeg'),
   };
+
+  if (IS_VERCEL) {
+    imported.buffer = data;
+  } else {
+    await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
+    imported.path = path.join(GOOGLE_PHOTOS_DIR, thumbnailFilename);
+    await writeFile(imported.path, data);
+  }
+
   googlePhotos.set(id, imported);
   return {
     id: imported.id,
@@ -849,11 +897,13 @@ function sendToPrinter(filePath) {
   });
 }
 
-if (!existsSync(UPLOAD_DIR)) {
-  await mkdir(UPLOAD_DIR, { recursive: true });
+if (!IS_VERCEL) {
+  if (!existsSync(UPLOAD_DIR)) {
+    await mkdir(UPLOAD_DIR, { recursive: true });
+  }
+  await mkdir(PRINT_DIR, { recursive: true });
+  await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
 }
-await mkdir(PRINT_DIR, { recursive: true });
-await mkdir(GOOGLE_PHOTOS_DIR, { recursive: true });
 await loadGoogleToken();
 
 if (!IS_VERCEL) {
