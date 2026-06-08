@@ -48,7 +48,7 @@ const GOOGLE_PHOTOS_SCOPE = 'openid email https://www.googleapis.com/auth/photos
 const SESSION_SECRET = process.env.SESSION_SECRET || GOOGLE_CLIENT_SECRET;
 const TOKEN_COOKIE = 'gphotos_token';
 const TOKEN_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
-const TEMP_FILE_MAX_AGE_MS = Number(process.env.TEMP_FILE_MAX_AGE_MS || (IS_VERCEL ? 5 * 60 * 1000 : 60 * 60 * 1000));
+const TEMP_FILE_MAX_AGE_MS = Number(process.env.TEMP_FILE_MAX_AGE_MS || (IS_VERCEL ? 15 * 60 * 1000 : 60 * 60 * 1000));
 const GOOGLE_PHOTO_DOWNLOAD_SIZE = Number(process.env.GOOGLE_PHOTO_DOWNLOAD_SIZE || 2400);
 const googlePhotos = new Map();
 let googleToken;
@@ -231,8 +231,14 @@ async function handlePrintRequest(req, res, { print }) {
   });
   const jobs = [...localJobs, ...googleJobs];
 
-  const invalidJob = jobs.find((job) => !job.file || !job.size);
-  if (invalidJob) {
+  const missingPhotoJob = jobs.find((job) => !job.file);
+  if (missingPhotoJob) {
+    await cleanupUploads(uploadedFiles);
+    return res.status(400).json({ error: 'One or more Google Photos expired. Please choose those photos again.' });
+  }
+
+  const invalidSizeJob = jobs.find((job) => !job.size);
+  if (invalidSizeJob) {
     await cleanupUploads(uploadedFiles);
     return res.status(400).json({ error: 'Please choose a valid print size for every photo.' });
   }
