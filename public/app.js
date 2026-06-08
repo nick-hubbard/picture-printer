@@ -733,10 +733,12 @@ async function waitForGooglePhotos(sessionId, pickerWindow) {
   // but Google's backend may take many seconds to mark mediaItemsSet=true, especially
   // for large selections and over higher-latency hosted environments. Keep polling for
   // a generous window after close before treating it as a true cancellation.
-  const POST_CLOSE_GRACE_MS = 60_000;
+  const POST_CLOSE_GRACE_MS = 30 * 60_000;
+  const OVERALL_TIMEOUT_MS = 30 * 60_000;
+  const startedAt = Date.now();
   let closedSince = 0;
 
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  while (Date.now() - startedAt < OVERALL_TIMEOUT_MS) {
     const response = await fetch(`/api/google-photos/session/${sessionId}?t=${Date.now()}`, {
       cache: 'no-store',
     });
